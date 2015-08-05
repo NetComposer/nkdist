@@ -1,0 +1,2 @@
+# nkdist
+Erlang distributed processes
