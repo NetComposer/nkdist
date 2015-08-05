@@ -141,7 +141,7 @@ handle_command(get_info, _Sender, #state{idx=Idx, pos=Pos, procs=Procs}=State) -
 
 
 handle_command({find_proc, ProcId}, _Sender, #state{procs=Procs, idx=Idx, pos=Pos}=State) ->
-	lager:info("FIND ~p at ~p {~p, ~p}", [ProcId, Pos, Idx, node()]),
+	lager:debug("FIND ~p at ~p {~p, ~p}", [ProcId, Pos, Idx, node()]),
 	case maps:get(ProcId, Procs, undefined) of
 		#proc{pid=Pid} ->
 			{reply, {ok, Pid}, State};
@@ -155,7 +155,7 @@ handle_command({start_proc, ProcId, CallBack, Args}, _Sender, State) ->
 		#proc{pid=Pid} ->
 			{reply, {error, {already_started, Pid}}, State};
 		undefined ->
-			lager:info("START ~p at ~p {~p, ~p}", [ProcId, Pos, Idx, node()]),
+			lager:debug("START ~p at ~p {~p, ~p}", [ProcId, Pos, Idx, node()]),
 			try 
 				case CallBack:start(ProcId, Args) of
 					{ok, Pid} ->
@@ -255,7 +255,7 @@ handle_handoff_data(BinObj, #state{procs=Procs}=State) ->
 	try
 		case maps:get(ProcId, Procs, undefined) of
 			undefined ->
-				lager:warning("Calling START AND JOIN"),
+				lager:debug("Calling START AND JOIN"),
 				case CallBack:start_and_join(ProcId, OldPid) of
 					{ok, NewPid} ->
 						State1 = started_proc(ProcId, CallBack, NewPid, State),
@@ -264,7 +264,7 @@ handle_handoff_data(BinObj, #state{procs=Procs}=State) ->
 			 			{reply, {error, Error}, State}
 			 	end;
 			#proc{pid=NewPid} ->
-				lager:warning("Calling JOIN"),
+				lager:debug("Calling JOIN"),
 				case CallBack:join(NewPid, OldPid) of
 					ok ->
 						{reply, ok, State};

@@ -49,7 +49,6 @@ find(ProcId) ->
 		[{_, Pid}|_] ->
 			{ok, Pid};
 		[] ->
-			lager:info("Not found in cache"),
 			find_in_vnode(ProcId)
 	end.
 

@@ -95,12 +95,11 @@ init(From, {Cmd, N, Timeout}) ->
 
 %% @private
 process_results({vnode, _Idx, _Node, {data, Data}}, State) ->
-	% lager:warning("DATA: ~p, ~p", [_Idx, Data]),
 	reply({data, Data}, State),
 	{ok, State};
 
 process_results({vnode, _Idx, _Node, {done, Data}}, State) ->
-	lager:warning("DONE: ~p, ~p, ~p", [nkdist_util:idx2pos(_Idx), _Node, Data]),
+	lager:debug("DONE: ~p, ~p, ~p", [nkdist_util:idx2pos(_Idx), _Node, Data]),
 	reply({data, Data}, State),
 	{done, State};
 

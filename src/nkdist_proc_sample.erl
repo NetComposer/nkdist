@@ -41,13 +41,13 @@ join(Pid, OldPid) ->
 
 init({proc_id, ProcId, _Args}) ->
     Data = crypto:rand_uniform(0, 100),
-    lager:warning("Test server ~p (~p) started with: ~p", [ProcId, self(), Data]),
+    lager:notice("Test server ~p (~p) started with: ~p", [ProcId, self(), Data]),
     {ok, #state{id=ProcId, data=Data}};
 
 init({join, ProcId, Pid}) ->
     case catch gen_server:call(Pid, freeze, infinity) of
         {ok, Data} ->
-            lager:warning("Test server ~p (~p) started from ~p (~p)", 
+            lager:notice("Test server ~p (~p) started from ~p (~p)", 
                           [ProcId, self(), Pid, Data]),
             {ok, #state{id=ProcId, data=Data}};
         _ ->
@@ -59,17 +59,17 @@ init({join, ProcId, Pid}) ->
     {reply, term(), #state{}} | {noreply, #state{}}.
 
 handle_call(freeze, _From, #state{data=Data}=State) ->
-    lager:warning("Test server ~p (~p) freezed", [self(), Data]),
+    lager:notice("Test server ~p (~p) freezed", [self(), Data]),
     {stop, normal, {ok, Data}, State};
 
 handle_call({join, Pid}, _From, #state{id=ProcId, data=Data}=State) ->
     case catch gen_server:call(Pid, freeze, infinity) of
         {ok, NewData} ->
-            lager:warning("Test server ~p (~p) joined ~p (~p, ~p)", 
+            lager:notice("Test server ~p (~p) joined ~p (~p, ~p)", 
                           [ProcId, self(), Pid, NewData, Data]),
             {reply, ok, State#state{data=max(NewData, Data)}};
         _ ->
-            lager:warning("Test server ~p (~p) could not join ~p", 
+            lager:notice("Test server ~p (~p) could not join ~p", 
                           [ProcId, self(), Pid]),
             {reply, {error, could_not_join}, State}
     end;
@@ -116,7 +116,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(_Reason, _State) ->
-    lager:warning("Test server stopped: ~p", [self()]),
+    lager:notice("Test server stopped: ~p", [self()]),
     ok.
 
 
