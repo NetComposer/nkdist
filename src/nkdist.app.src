@@ -1,0 +1,18 @@
+{application, nkdist, [
+    {description, "Nekso Distributed Library"},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkdist_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        crypto,
+        sasl,
+        ssl,
+        lager,
+        nklib,
+        riak_core
+    ]},
+    {env, []}
+]}.
