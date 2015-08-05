@@ -23,7 +23,7 @@
 -pa deps/riak_sysmon/ebin
 -pa deps/setup/ebin
 -pa deps/sext/ebin
--pa ../nkcluster_lib/ebin
+-pa ../nkdist/ebin
 
 ## Name of the node
 #-name nkcluster@127.0.0.1
