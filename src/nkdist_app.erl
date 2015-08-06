@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(application).
 
--export([start/0, start/2, stop/1]).
+-export([start/0, start/1, start/2, stop/1]).
 -export([get/1, put/2]).
 
 -include("nkdist.hrl").
@@ -40,11 +40,19 @@
     ok | {error, Reason::term()}.
 
 start() ->
+    start(temporary).
+
+
+%% @doc Starts stand alone.
+-spec start(permanent | transient | temporary) -> 
+    ok | {error, Reason::term()}.
+
+start(Type) ->
     application:load(riak_core),
     {ok, DataDir} = application:get_env(riak_core, platform_data_dir),
     RingFile = filename:join([DataDir, "ring", "dummy"]),
     filelib:ensure_dir(RingFile),
-    case nklib_util:ensure_all_started(?APP, temporary) of
+    case nklib_util:ensure_all_started(?APP, Type) of
         {ok, _Started} ->
             riak_core:wait_for_service(nkdist),
             ok;
@@ -57,7 +65,7 @@ start() ->
 start(_Type, _Args) ->
     {ok, Vsn} = application:get_key(?APP, vsn),
     nkdist_util:store_idx_cache(),
-    lager:notice("NkDIST LIB v~s is starting", [Vsn]),
+    lager:notice("NkDIST v~s is starting", [Vsn]),
     {ok, Pid} = nkdist_sup:start_link(),
     riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
     %% Force the creation of vnodes before waiting for 
