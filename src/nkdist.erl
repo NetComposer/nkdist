@@ -23,10 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/1, find_in_vnode/1, start/3, get_all/0, get_all/1]).
--export_type([proc_id/0]).
--include("nkdist.hrl").
+-export([get_vnode/1]).
 
--compile([export_all]).
+-export_type([proc_id/0, vnode_id/0]).
+-include("nkdist.hrl").
 
 
 %% ===================================================================
@@ -34,6 +34,7 @@
 %% ===================================================================
 
 -type proc_id() :: term().
+-type vnode_id() :: {chash:index_as_int(),  node()}.
 
 
 %% ===================================================================
@@ -111,6 +112,10 @@ get_all(CallBack) ->
 %% Private
 %% ===================================================================
 
+
+%% @private
+-spec get_vnode(proc_id()) ->
+    vnode_id().
 
 get_vnode(ProcId) ->
 	DocIdx = riak_core_util:chash_key({?APP, ProcId}),

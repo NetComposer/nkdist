@@ -49,15 +49,13 @@
 -include("nkdist.hrl").
 -include_lib("riak_core/include/riak_core_vnode.hrl").
 
--type vnode_id() :: {chash:index_as_int(),	node()}.
-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% External %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 %% @private
--spec get_info(vnode_id()) ->
+-spec get_info(nkdist:vnode_id()) ->
 	{ok, map()}.
 
 get_info({Idx, Node}) ->
@@ -65,7 +63,7 @@ get_info({Idx, Node}) ->
 
 
 %% @private
--spec find_proc(vnode_id(), nkdist:proc_id()) ->
+-spec find_proc(nkdist:vnode_id(), nkdist:proc_id()) ->
 	{ok, pid()} | {error, not_found}.
 
 find_proc({Idx, Node}, ProcId) ->
@@ -73,7 +71,7 @@ find_proc({Idx, Node}, ProcId) ->
 
 
 %% @private
--spec start_proc(vnode_id(), nkdist:proc_id(), module(), term()) ->
+-spec start_proc(nkdist:vnode_id(), nkdist:proc_id(), module(), term()) ->
 	{ok, pid()} | {error, {already_started, pid()}} | {error, term()}.
 
 start_proc({Idx, Node}, ProcId, CallBack, Args) ->
@@ -83,7 +81,7 @@ start_proc({Idx, Node}, ProcId, CallBack, Args) ->
 %% @private
 %% Sends a synchronous request to the vnode.
 %% If it fails, it will launch an exception
--spec spawn_command(vnode_id(), term()) ->
+-spec spawn_command(nkdist:vnode_id(), term()) ->
 	{ok, term()} | {error, term()}.
 
 spawn_command({Idx, Node}, Msg) ->
