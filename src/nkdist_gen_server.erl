@@ -28,7 +28,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/3, start/3, get_master/2, call/3, cast/2]).
+-export([start_link/3, start/3, get_master/2, call/2, call/3, cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -103,8 +103,16 @@ get_master(Callback, Timeout) ->
     gen_server:call(Callback, nkdist_get_master, Timeout).
 
 
+%% @doc Equivalent to call(Callback, Msg, 5000)
+-spec call(atom(), term()) ->
+    term() | {error, no_master}.
+
+call(Callback, Msg) ->
+    call(Callback, Msg, 5000).
+
+
 %% @doc Cals to the current master
--spec call(atom(), term(), pos_integer()) ->
+-spec call(atom(), term(), pos_integer()|infinity) ->
     term() | {error, no_master}.
 
 call(Callback, Msg, Timeout) ->
