@@ -73,13 +73,13 @@ terminate(_Reason, _State) ->
 Now, you can go to any node of the _riak_core_ cluster and start an instance of our process:
 
 ```erlang
-> nkdist:start(proc1, sample, 0)
+> nkdist:start_proc(proc1, sample, 0)
 {ok, <...>}
 ```
 
 NkDIST will find the corresponding _vnode index_ for this process (using _consistent hashing_ over the `proc_id()`, _proc1_ in this example) and will send a request to that vnode to start the process. The function `sample:start/2` will be called, and the returned `pid()` is replied to the caller and stored in a map in the vnode. If the process dies, it is removed from the vnode store.
 
-Later on, you can find the `pid()` for the process calling `nkdist:find(proc1)`. Once a `pid()` is returned, it is cached at each node in a local ETS table.
+Later on, you can find the `pid()` for the process calling `nkdist:find_proc(proc1)`. Once a `pid()` is returned, it is cached at each node in a local ETS table.
 
 When you add or remove nodes to the _riak_core_ cluster, the _handoff process_ starts and some vnodes must move from the old node to a new node. Each moving vnode will look at its managed processes, and will call `sample:start_and_join/2` at the new node, with the `pid()` of the old process. The callback function must start a new process, get any state from the old process and stop it as soon as possible.
 

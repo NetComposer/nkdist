@@ -22,7 +22,7 @@
 -module(nkdist).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, find_in_vnode/1, start/3, get_all/0, get_all/1]).
+-export([find_proc/1, find_proc_in_vnode/1, start_proc/3, get_procs/0, get_procs/1]).
 -export([register/1, get_vnode/1]).
 
 -export_type([proc_id/0, vnode_id/0]).
@@ -42,24 +42,24 @@
 %% ===================================================================
 
 %% @doc Finds a process pid
--spec find(proc_id()) ->
+-spec find_proc(proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
-find(ProcId) ->
+find_proc(ProcId) ->
 	case nklib_proc:values({?APP, ProcId}) of
 		[{_, Pid}|_] ->
 			{ok, Pid};
 		[] ->
-			find_in_vnode(ProcId)
+			find_proc_in_vnode(ProcId)
 	end.
 
 
 %% @doc Finds a process pid directly in vnode
 %% (without using the cache)
--spec find_in_vnode(proc_id()) ->
+-spec find_proc_in_vnode(proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
-find_in_vnode(ProcId) ->
+find_proc_in_vnode(ProcId) ->
 	case get_vnode(ProcId) of
         {ok, VNodeId} ->
             case nkdist_vnode:find_proc(VNodeId, ProcId) of
@@ -75,10 +75,10 @@ find_in_vnode(ProcId) ->
 
 
 %% @doc Starts a new process 
--spec start(proc_id(), module(), term()) ->
+-spec start_proc(proc_id(), module(), term()) ->
     {ok, pid()} | {error, {already_started, pid()}} | {error, term()}.
 
-start(ProcId, CallBack, Args) ->
+start_proc(ProcId, CallBack, Args) ->
     case get_vnode(ProcId) of
         {ok, VNodeId} ->
             case nkdist_vnode:start_proc(VNodeId, ProcId, CallBack, Args) of
@@ -97,20 +97,20 @@ start(ProcId, CallBack, Args) ->
 
 
 %% @doc Gets all stared processes in the cluster
--spec get_all() ->
+-spec get_procs() ->
     {ok, [{proc_id(), module(), pid()}]}.
 
 
-get_all() ->
+get_procs() ->
 	Fun = fun(Data, Acc) -> Data++Acc end,
 	nkdist_coverage:launch(get_procs, 1, 10000, Fun, []).
 
 
 %% @doc Gets all stared processes in the cluster belonging to this callback
--spec get_all(module()) ->
+-spec get_procs(module()) ->
     {ok, [{proc_id(), pid()}]}.
 
-get_all(CallBack) ->
+get_procs(CallBack) ->
 	Fun = fun(Data, Acc) -> Data++Acc end,
 	nkdist_coverage:launch({get_procs, CallBack}, 1, 10000, Fun, []).
 
