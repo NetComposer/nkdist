@@ -300,8 +300,8 @@ handle_handoff_data(BinObj, #state{procs=Procs}=State) ->
 					 			{reply, {error, Error}, State}
 					 	end
 				end;
-			{{masters, Name}, Pids} ->
-				State1 = lists:fold(
+			{{master, Name}, Pids} ->
+				State1 = lists:foldl(
 					fun(Pid, Acc) -> do_register(Name, Pid, Acc) end,
 					State,
 					Pids),
