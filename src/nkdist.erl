@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/1, find_in_vnode/1, start/3, get_all/0, get_all/1]).
--export([get_vnode/1]).
+-export([register/1, get_vnode/1]).
 
 -export_type([proc_id/0, vnode_id/0]).
 -include("nkdist.hrl").
@@ -60,13 +60,17 @@ find(ProcId) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
 find_in_vnode(ProcId) ->
-	VNodeId = get_vnode(ProcId),
-    case nkdist_vnode:find_proc(VNodeId, ProcId) of
-    	{ok, Pid} ->
-    		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
-    		{ok, Pid};
-    	{error, Error} ->
-    		{error, Error}
+	case get_vnode(ProcId) of
+        {ok, VNodeId} ->
+            case nkdist_vnode:find_proc(VNodeId, ProcId) of
+            	{ok, Pid} ->
+            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+            		{ok, Pid};
+            	{error, Error} ->
+            		{error, Error}
+            end;
+        error ->
+            {error, no_vnode}
     end.
 
 
@@ -75,16 +79,20 @@ find_in_vnode(ProcId) ->
     {ok, pid()} | {error, {already_started, pid()}} | {error, term()}.
 
 start(ProcId, CallBack, Args) ->
-	VNodeId = get_vnode(ProcId),
-    case nkdist_vnode:start_proc(VNodeId, ProcId, CallBack, Args) of
-    	{ok, Pid} ->
-    		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
-    		{ok, Pid};
-    	{error, {already_started, Pid}} ->
-    		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
-            {error, {already_started, Pid}};
-        {error, Error} ->
-            {error, Error}
+    case get_vnode(ProcId) of
+        {ok, VNodeId} ->
+            case nkdist_vnode:start_proc(VNodeId, ProcId, CallBack, Args) of
+            	{ok, Pid} ->
+            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+            		{ok, Pid};
+            	{error, {already_started, Pid}} ->
+            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+                    {error, {already_started, Pid}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        error ->
+            {error, no_vnode}
     end.
 
 
@@ -107,6 +115,24 @@ get_all(CallBack) ->
 	nkdist_coverage:launch({get_procs, CallBack}, 1, 10000, Fun, []).
 
 
+%% @doc Registers a master class
+%% NkDIST will keep at a specific VNode the list of pids of all 
+%% processes calling this function, and will send to all the message 
+%% {nkdist_master, Class, pid()}, with the pid of the first
+%% successfully registered process.
+%% If this dies, the next one will be selected and sent to all.
+%% See nkdist_gen_server
+-spec register(atom()) ->
+    {ok, VNode::pid()} | {error, term()}.
+
+register(Class) ->
+    case get_vnode(Class) of
+        {ok, VNodeId} ->
+            nkdist_vnode:register(VNodeId, Class, self());
+        error ->
+            {error, no_vnode}
+    end.
+
 
 %% ===================================================================
 %% Private
@@ -115,7 +141,7 @@ get_all(CallBack) ->
 
 %% @private
 -spec get_vnode(proc_id()) ->
-    vnode_id().
+    {ok, vnode_id()} | error.
 
 get_vnode(ProcId) ->
 	DocIdx = riak_core_util:chash_key({?APP, ProcId}),
@@ -123,6 +149,8 @@ get_vnode(ProcId) ->
 	% currently available. 
 	% If it is a secondary vnode (the node with the primary has failed), 
 	% a handoff process will move the process back to the primary
-    [{Idx, Node}] = riak_core_apl:get_apl(DocIdx, 1, ?APP),
-    {Idx, Node}.
+    case riak_core_apl:get_apl(DocIdx, 1, ?APP) of
+        [{Idx, Node}] -> {ok, {Idx, Node}};
+        [] -> error
+    end.
 

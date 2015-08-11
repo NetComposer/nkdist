@@ -24,7 +24,7 @@
 
 -behaviour(riak_core_vnode).
 
--export([get_info/1, find_proc/2, start_proc/4]).
+-export([get_info/1, find_proc/2, start_proc/4, register/3]).
 
 -export([start_vnode/1,
          init/1,
@@ -41,10 +41,7 @@
          handle_coverage/4,
          handle_info/2,
          handle_exit/3,
-         ready_to_exit/0,
-         set_vnode_forwarding/2,
-         handle_overload_command/3,
-         handle_overload_info/2]).
+         set_vnode_forwarding/2]).
 
 -include("nkdist.hrl").
 -include_lib("riak_core/include/riak_core_vnode.hrl").
@@ -78,6 +75,16 @@ start_proc({Idx, Node}, ProcId, CallBack, Args) ->
 	spawn_command({Idx, Node}, {start_proc, ProcId, CallBack, Args}).
 
 
+
+%% @private
+-spec register(nkdist:vnode_id(), atom(), pid()) ->
+	{ok, VNode::pid()} | {error, term()}.
+
+
+register({Idx, Node}, Name, Pid) ->
+	command({Idx, Node}, {register, Name, Pid}).
+
+
 %% @private
 %% Sends a synchronous request to the vnode.
 %% If it fails, it will launch an exception
@@ -86,6 +93,17 @@ start_proc({Idx, Node}, ProcId, CallBack, Args) ->
 
 spawn_command({Idx, Node}, Msg) ->
 	riak_core_vnode_master:sync_spawn_command({Idx, Node}, Msg, ?VMASTER).
+
+
+%% @private
+%% Sends a synchronous request to the vnode.
+%% If it fails, it will launch an exception
+-spec command(nkdist:vnode_id(), term()) ->
+	{ok, term()} | {error, term()}.
+
+command({Idx, Node}, Msg) ->
+	riak_core_vnode_master:sync_command({Idx, Node}, Msg, ?VMASTER).
+
 
 %% @private
 start_vnode(I) ->
@@ -108,7 +126,8 @@ start_vnode(I) ->
 	idx :: chash:index_as_int(),				% vnode's index
 	pos :: integer(),
 	procs :: #{nkdist:proc_id() => #proc{}},
-	pids :: #{pid() => nkdist:proc_id()},
+	masters :: #{atom() => [pid()]},			% first in row is master
+	pids :: #{pid() => {proc, nkdist:proc_id()} | {master, atom()}},
     handoff_target :: {chash:index_as_int(), node()},
     forward :: node() | [{integer(), node()}]
 }).
@@ -120,7 +139,8 @@ init([Idx]) ->
 		idx = Idx,
 		pos = nkdist_util:idx2pos(Idx),
 		procs = #{},
-		pids = #{}
+		pids = #{},
+		masters = #{}
 	},
 	Workers = application:get_env(?APP, vnode_workers, 1),
 	FoldWorkerPool = {pool, nkdist_vnode_worker, Workers, []},
@@ -168,6 +188,10 @@ handle_command({start_proc, ProcId, CallBack, Args}, _Sender, State) ->
            	end
     end;
 
+handle_command({register, Name, Pid}, _Send, State) ->
+	State1 = do_register(Name, Pid, State),
+	{reply, {ok, self()}, State1};
+
 handle_command(Message, _Sender, State) ->
     lager:warning("NkDIST VNode: Unhandled command: ~p, ~p", [Message, _Sender]),
 	{reply, {error, unhandled_command}, State}.
@@ -203,12 +227,13 @@ handle_coverage(Cmd, _KeySpaces, _Sender, State) ->
 
 %% @private
 handle_handoff_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0}, Sender, State) -> 
-	#state{procs=Procs} = State,
-	Data = [
+	#state{masters=Masters, procs=Procs} = State,
+	MastersData = maps:to_list(Masters),
+	ProcsData = [
 		{ProcId, CallBack, Pid} ||
 		{ProcId, #proc{callback=CallBack, pid=Pid}} <- maps:to_list(Procs)
 	],
-	{async, {handoff, Data, Fun, Acc0}, Sender, State};
+	{async, {handoff, MastersData, ProcsData, Fun, Acc0}, Sender, State};
 
 handle_handoff_command({find_proc, ProcId}, _Sender, #state{procs=Procs}=State) ->
 	case maps:get(ProcId, Procs, undefined) of
@@ -218,10 +243,11 @@ handle_handoff_command({find_proc, ProcId}, _Sender, #state{procs=Procs}=State) 
 			{forwward, State}
 	end;
 
-handle_handoff_command({start_proc, _ProcId, _CallBack, _Args}, _Sender, State) ->
+handle_handoff_command(Term, _Sender, State) when
+		element(1, Term)==register; element(1, Term)==start_proc ->
 	{forward, State};
 
-% Rest of operarions locally
+% Process rest of operations locally
 handle_handoff_command(Cmd, Sender, State) ->
 	lager:info("Handoff command ~p at ~p", [Cmd, State#state.pos]),
 	handle_command(Cmd, Sender, State).
@@ -234,8 +260,11 @@ handoff_starting({Type, {Idx, Node}}, #state{pos=Pos}=State) ->
 
 
 %% @private
-handoff_cancelled(#state{pos=Pos}=State) ->
+handoff_cancelled(#state{masters=Masters, pos=Pos}=State) ->
 	lager:notice("Handoff cancelled at ~p", [Pos]),
+	lists:foreach(
+		fun({Name, Pids}) -> send_master(Name, Pids) end,
+		maps:to_list(Masters)),
     {ok, State#state{handoff_target=undefined}}.
 
 
@@ -249,26 +278,34 @@ handoff_finished({_Idx, Node}, #state{pos=Pos}=State) ->
 %% If we reply {error, ...}, the handoff is cancelled, and riak_core will retry it
 %% again and again
 handle_handoff_data(BinObj, #state{procs=Procs}=State) ->
-	{proc, ProcId, CallBack, OldPid} = binary_to_term(zlib:unzip(BinObj)),
 	try
-		case maps:get(ProcId, Procs, undefined) of
-			undefined ->
-				lager:debug("Calling START AND JOIN"),
-				case CallBack:start_and_join(ProcId, OldPid) of
-					{ok, NewPid} ->
-						State1 = started_proc(ProcId, CallBack, NewPid, State),
-						{reply, ok, State1};
-					{error, Error} ->
-			 			{reply, {error, Error}, State}
-			 	end;
-			#proc{pid=NewPid} ->
-				lager:debug("Calling JOIN"),
-				case CallBack:join(NewPid, OldPid) of
-					ok ->
-						{reply, ok, State};
-					{error, Error} ->
-			 			{reply, {error, Error}, State}
-			 	end
+		case binary_to_term(zlib:unzip(BinObj)) of
+			{{proc, ProcId}, {CallBack, OldPid}} ->
+				case maps:get(ProcId, Procs, undefined) of
+					undefined ->
+						lager:debug("Calling START AND JOIN"),
+						case CallBack:start_and_join(ProcId, OldPid) of
+							{ok, NewPid} ->
+								State1 = started_proc(ProcId, CallBack, NewPid, State),
+								{reply, ok, State1};
+							{error, Error} ->
+					 			{reply, {error, Error}, State}
+					 	end;
+					#proc{pid=NewPid} ->
+						lager:debug("Calling JOIN"),
+						case CallBack:join(NewPid, OldPid) of
+							ok ->
+								{reply, ok, State};
+							{error, Error} ->
+					 			{reply, {error, Error}, State}
+					 	end
+				end;
+			{{masters, Name}, Pids} ->
+				State1 = lists:fold(
+					fun(Pid, Acc) -> do_register(Name, Pid, Acc) end,
+					State,
+					Pids),
+				{reply, ok, State1}
 		end
 	catch
 		C:E ->
@@ -277,8 +314,8 @@ handle_handoff_data(BinObj, #state{procs=Procs}=State) ->
 
 
 %% @private
-encode_handoff_item({proc, ProcId}, {CallBack,Pid}) ->
-	zlib:zip(term_to_binary({proc, ProcId, CallBack, Pid})).
+encode_handoff_item(Key, Val) ->
+	zlib:zip(term_to_binary({Key, Val})).
 
 
 %% @private
@@ -296,7 +333,7 @@ delete(#state{pos=Pos}=State) ->
 
 %% @private
 handle_info({'DOWN', _Ref, process, Pid, Reason}, State) ->
-	#state{procs=Procs, pids=Pids, pos=Pos} = State,
+	#state{procs=Procs, pids=Pids, masters=Masters, pos=Pos} = State,
 	case maps:get(Pid, Pids, undefined) of
 		undefined ->
 			case Reason of
@@ -307,11 +344,28 @@ handle_info({'DOWN', _Ref, process, Pid, Reason}, State) ->
 								 [Pos, Pid, Reason])
 			end,
 			{ok, State};
-		ProcId ->
-			lager:info("VNODE ProcID ~p DOWN", [ProcId]),
+		{proc, ProcId} ->
+			lager:info("VNODE ProcID '~p' DOWN", [ProcId]),
 			Procs1 = maps:remove(ProcId, Procs),
 			Pids1 = maps:remove(Pid, Pids),
-			{ok, State#state{procs=Procs1, pids=Pids1}}
+			{ok, State#state{procs=Procs1, pids=Pids1}};
+		{master, Name} ->
+			lager:info("VNODE Master '~p' DOWN (~p, ~p)", [Name, Pid, Reason]),
+			MasterPids = maps:get(Name, Masters),
+			case MasterPids -- [Pid] of
+				[] ->
+					Masters1 = maps:remove(Name, Masters),
+					Pids1 = maps:remove(Pid, Pids),
+					{ok, State#state{masters=Masters1, pids=Pids1}};
+				MasterPids1 ->
+					case State#state.handoff_target of
+						undefined -> send_master(Name, MasterPids1);
+						_ -> ok
+					end,
+					Masters1 = maps:put(Name, MasterPids1, Masters),
+					Pids1 = maps:remove(Pid, Pids),
+					{ok, State#state{masters=Masters1, pids=Pids1}}
+			end
 	end;
 
 handle_info(Msg, State) ->
@@ -337,104 +391,49 @@ terminate(Reason, #state{pos=Pos}) ->
 	lager:debug("VNode ~p terminate: ~p", [Pos, Reason]).
 
 
-%% Optional CallBack. A node is about to exit. Ensure that this node doesn't
-%% have any current ensemble members.
-ready_to_exit() ->
-	true.
-
-
 %% @private Called from riak core on forwarding state, after the handoff has been
 %% completed, but before the new vnode is marked as the owner of the partition
 set_vnode_forwarding(Forward, State) ->
     State#state{forward=Forward}.
 
 
-%% @private
-%% Internal messages having Sender=ignore should not get here
-handle_overload_command(_Cmd, Sender, Idx) ->
-    send_reply({error, overload}, Sender, Idx).
-
-
-%% @private
-handle_overload_info({ensemble_ping, _From}, _Idx) ->
-    %% Don't respond to pings in overload
-    ok;
-handle_overload_info({ensemble_get, _, From}, _Idx) ->
-    riak_ensemble_backend:reply(From, {error, overload});
-handle_overload_info({raw_forward_get, _, From}, _Idx) ->
-    riak_ensemble_backend:reply(From, {error, overload});
-handle_overload_info({ensemble_put, _, _, From}, _Idx) ->
-    riak_ensemble_backend:reply(From, {error, overload});
-handle_overload_info({raw_forward_put, _, _, From}, _Idx) ->
-    riak_ensemble_backend:reply(From, {error, overload});
-handle_overload_info(_, _) ->
-    ok.
-
-
-%% Resizing callbacks
-
-% %% callback used by dynamic ring sizing to determine where
-% %% requests should be forwarded. Puts/deletes are forwarded
-% %% during the operation, all other requests are not
-% request_hash(?KV_PUT_REQ{bkey=BKey}) ->
-%     riak_core_util:chash_key(BKey);
-% request_hash(?KV_DELETE_REQ{bkey=BKey}) ->
-%     riak_core_util:chash_key(BKey);
-% request_hash(_Req) ->
-%     % Do not forward other requests
-%     undefined.
-%
-% nval_map(Ring) ->
-%     riak_core_bucket:bucket_nval_map(Ring).
-%
-% %% @private
-% object_info({Bucket, _Key}=BKey) ->
-%     Hash = riak_core_util:chash_key(BKey),
-%     {Bucket, Hash}.
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-started_proc(ProcId, CallBack, Pid, #state{procs=Procs, pids=Pids}=State) ->
-	Proc = #proc{callback=CallBack, pid=Pid, mon=monitor(process, Pid)},
-	Procs1 = maps:put(ProcId, Proc, Procs),
-	Pids1 =  maps:put(Pid, ProcId, Pids),
-	State#state{procs=Procs1, pids=Pids1}.
-
-
-% %% @private
-% -spec reply(term(), #state{}) ->
-% 	{reply, {vnode, integer(), atom(), term()}, #state{}}.
-
-% reply(Reply, #state{pos=_Pos}=State) ->
-% 	% {reply, {vnode, Pos, node(), Reply}, State}.
-% 	{reply, {vnode, Reply}, State}.
+%% @private
+do_register(Name, Pid, #state{masters=Masters, pids=Pids}=State) ->
+	MasterPids = maps:get(Name, Masters, []),
+	case lists:member(Pid, MasterPids) of
+		true ->
+			State;
+		false ->
+			monitor(process, Pid),
+			MasterPids1 = MasterPids ++ [Pid],
+			send_master(Name, MasterPids1),
+			Masters1 = maps:put(Name, MasterPids1, Masters),
+			Pids1 = maps:put(Pid, {master, Name}, Pids),
+			State#state{masters=Masters1, pids=Pids1}
+	end.
 
 
 %% @private
--spec send_reply(term(), sender(), chash:index_as_int()) ->
-	any().
+started_proc(ProcId, CallBack, Pid, #state{procs=Procs, pids=Pids}=State) ->
+	Proc = #proc{callback=CallBack, pid=Pid, mon=monitor(process, Pid)},
+	Procs1 = maps:put(ProcId, Proc, Procs),
+	Pids1 =  maps:put(Pid, {proc, ProcId}, Pids),
+	State#state{procs=Procs1, pids=Pids1}.
 
-send_reply(Reply, Sender, Idx) ->
-	riak_core_vnode:reply(Sender, {vnode, Idx, node(), Reply}).
+
+%% @private Elects master as first pid on this node
+send_master(Name, [Master|_]=Pids) ->
+	lists:foreach(fun(Pid) -> Pid ! {nkdist_master, Name, Master} end, Pids).
+	
+% %% @private Say no master to everyone
+% send_no_master(Name, Pids) ->
+% 	lists:foreach(fun(Pid) -> Pid ! {nkdist_master, Name, undefined} end, Pids).
 
 
-% %% @private Filter function for coverage requests
-% -spec get_key_filter(term(), #state{}) ->
-% 	fun((binary()) -> boolean()).
 
-% get_key_filter(KeySpaces, #state{idx=Idx}) ->
-% 	case nkdist:get_value(Idx, KeySpaces) of
-% 		undefined ->
-% 			fun(_Key) -> true end;
-% 		FilterVNode ->
-% 			{ok, Ring} = riak_core_ring_manager:get_my_ring(),
-%             fun({_Domain, Class, Key}) ->
-%             	ChashKey = chash:key_of({Class, Key}),
-%             	PrefListIndex = riak_core_ring:responsible_index(ChashKey, Ring),
-%             	lists:member(PrefListIndex, FilterVNode)
-%             end
-%     end.
 
 

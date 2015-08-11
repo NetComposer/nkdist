@@ -42,9 +42,10 @@ init_worker(VNodeIndex, [], _Props) ->
 
 
 %% @private
-handle_work({handoff, Data, Fun, Acc}, Sender, State) ->
-	Result = do_handoff(Data, Fun, Acc),
-	riak_core_vnode:reply(Sender, Result),
+handle_work({handoff, Masters, Procs, Fun, Acc}, Sender, State) ->
+	Acc1 = do_master_handoff(Masters, Fun, Acc),
+	Acc2 = do_proc_handoff(Procs, Fun, Acc1),
+	riak_core_vnode:reply(Sender, Acc2),
 	{noreply, State}.
 
 
@@ -56,9 +57,18 @@ handle_work({handoff, Data, Fun, Acc}, Sender, State) ->
 
 
 %% @private
-do_handoff([], _Fun, Acc) ->
+do_master_handoff([], _Fun, Acc) ->
 	Acc;
 
-do_handoff([{ProcId, CallBack, Pid}|Rest], Fun, Acc) ->
+do_master_handoff([{Name, Pids}|Rest], Fun, Acc) ->
+	Acc1 = Fun({master, Name}, Pids, Acc),
+	do_master_handoff(Rest, Fun, Acc1).
+
+
+%% @private
+do_proc_handoff([], _Fun, Acc) ->
+	Acc;
+
+do_proc_handoff([{ProcId, CallBack, Pid}|Rest], Fun, Acc) ->
 	Acc1 = Fun({proc, ProcId}, {CallBack, Pid}, Acc),
-	do_handoff(Rest, Fun, Acc1).
+	do_proc_handoff(Rest, Fun, Acc1).	
