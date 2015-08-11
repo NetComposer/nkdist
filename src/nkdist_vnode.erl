@@ -336,21 +336,15 @@ handle_info({'DOWN', _Ref, process, Pid, Reason}, State) ->
 	#state{procs=Procs, pids=Pids, masters=Masters, pos=Pos} = State,
 	case maps:get(Pid, Pids, undefined) of
 		undefined ->
-			case Reason of
-				normal -> 
-					ok;
-				_ -> 
-					lager:notice("VNode ~p unexpected DOWN: ~p (~p)", 
-								 [Pos, Pid, Reason])
-			end,
+			lager:info("VNode ~p unexpected down (~p, ~p)", [Pos, Pid, Reason]),
 			{ok, State};
 		{proc, ProcId} ->
-			lager:info("VNODE ProcID '~p' DOWN", [ProcId]),
+			lager:info("VNode proc '~p' down (~p)", [ProcId, Reason]),
 			Procs1 = maps:remove(ProcId, Procs),
 			Pids1 = maps:remove(Pid, Pids),
 			{ok, State#state{procs=Procs1, pids=Pids1}};
 		{master, Name} ->
-			lager:info("VNODE Master '~p' DOWN (~p, ~p)", [Name, Pid, Reason]),
+			lager:info("VNode master '~p' down (~p, ~p)", [Name, Pid, Reason]),
 			MasterPids = maps:get(Name, Masters),
 			case MasterPids -- [Pid] of
 				[] ->

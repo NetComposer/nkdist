@@ -29,7 +29,7 @@
 
 %% @doc Start a new process
 %% This callback is called when the start of a new process has been requested
-%% using nkdist:start/3.
+%% using nkdist:start_proc/3.
 %% You must start a new Erlang process and return its pid().
 %% If you link to the calling process (the vnode process), you will receive an
 %% 'EXIT' when the vnode is shutted down.
