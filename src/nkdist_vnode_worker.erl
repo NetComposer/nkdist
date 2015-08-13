@@ -69,6 +69,6 @@ do_master_handoff([{Name, Pids}|Rest], Fun, Acc) ->
 do_proc_handoff([], _Fun, Acc) ->
 	Acc;
 
-do_proc_handoff([{ProcId, CallBack, Pid}|Rest], Fun, Acc) ->
-	Acc1 = Fun({proc, ProcId}, {CallBack, Pid}, Acc),
+do_proc_handoff([{{CallBack, ProcId}, Pid}|Rest], Fun, Acc) ->
+	Acc1 = Fun({proc, CallBack, ProcId}, Pid, Acc),
 	do_proc_handoff(Rest, Fun, Acc1).	

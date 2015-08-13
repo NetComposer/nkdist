@@ -22,8 +22,9 @@
 -module(nkdist).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find_proc/1, find_proc_in_vnode/1, start_proc/3, get_procs/0, get_procs/1]).
+-export([find_proc/2, find_proc_in_vnode/2, start_proc/3, get_procs/0, get_procs/1]).
 -export([register/1, get_masters/0, get_vnode/1]).
+-export([get_info/0]).
 
 -export_type([proc_id/0, vnode_id/0]).
 -include("nkdist.hrl").
@@ -42,29 +43,29 @@
 %% ===================================================================
 
 %% @doc Finds a process pid
--spec find_proc(proc_id()) ->
+-spec find_proc(module(), proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
-find_proc(ProcId) ->
-	case nklib_proc:values({?APP, ProcId}) of
+find_proc(CallBack, ProcId) ->
+	case nklib_proc:values({?APP, CallBack, ProcId}) of
 		[{_, Pid}|_] ->
 			{ok, Pid};
 		[] ->
-			find_proc_in_vnode(ProcId)
+			find_proc_in_vnode(CallBack, ProcId)
 	end.
 
 
 %% @doc Finds a process pid directly in vnode
 %% (without using the cache)
--spec find_proc_in_vnode(proc_id()) ->
+-spec find_proc_in_vnode(module(), proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
-find_proc_in_vnode(ProcId) ->
+find_proc_in_vnode(CallBack, ProcId) ->
 	case get_vnode(ProcId) of
         {ok, VNodeId} ->
-            case nkdist_vnode:find_proc(VNodeId, ProcId) of
+            case nkdist_vnode:find_proc(VNodeId, CallBack, ProcId) of
             	{ok, Pid} ->
-            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
             		{ok, Pid};
             	{error, Error} ->
             		{error, Error}
@@ -75,18 +76,18 @@ find_proc_in_vnode(ProcId) ->
 
 
 %% @doc Starts a new process 
--spec start_proc(proc_id(), module(), term()) ->
+-spec start_proc(module(), proc_id(), term()) ->
     {ok, pid()} | {error, {already_started, pid()}} | {error, term()}.
 
-start_proc(ProcId, CallBack, Args) ->
+start_proc(CallBack, ProcId, Args) ->
     case get_vnode(ProcId) of
         {ok, VNodeId} ->
-            case nkdist_vnode:start_proc(VNodeId, ProcId, CallBack, Args) of
+            case nkdist_vnode:start_proc(VNodeId, CallBack, ProcId, Args) of
             	{ok, Pid} ->
-            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
             		{ok, Pid};
             	{error, {already_started, Pid}} ->
-            		nklib_proc:put({?APP, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
                     {error, {already_started, Pid}};
                 {error, Error} ->
                     {error, Error}
@@ -98,7 +99,7 @@ start_proc(ProcId, CallBack, Args) ->
 
 %% @doc Gets all stared processes in the cluster
 -spec get_procs() ->
-    {ok, [{proc_id(), module(), pid()}]}.
+    {ok, [{{module(), proc_id()}, pid()}]}.
 
 get_procs() ->
     Fun = fun(Data, Acc) -> Data++Acc end,
@@ -142,6 +143,7 @@ get_masters() ->
     nkdist_coverage:launch(get_masters, 1, 10000, Fun, #{}).
 
 
+
 %% ===================================================================
 %% Private
 %% ===================================================================
@@ -161,4 +163,15 @@ get_vnode(Term) ->
         [{Idx, Node}] -> {ok, {Idx, Node}};
         [] -> error
     end.
+
+
+%% @private
+get_info() ->
+    Fun = fun(Map, Acc) -> [Map|Acc] end,
+    case nkdist_coverage:launch(get_info, 1, 10000, Fun, []) of
+        {ok, List} -> lists:sort(List);
+        {error, Error} -> {error, Error}
+    end.
+
+
 
