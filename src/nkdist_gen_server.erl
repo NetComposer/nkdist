@@ -232,11 +232,15 @@ terminate(Reason, State) ->
 
 %% @private
 register(#state{callback=Callback}=State) ->
-    case nkdist:register(Callback) of
+    case catch nkdist:register(Callback) of
         {ok, VNode} ->
             monitor(process, VNode),
             State#state{vnode=VNode};
         {error, Error} ->
+            lager:notice("NkDIST: Callback ~p could not register: ~p", [Callback, Error]),
+            erlang:send_after(500, self(), nkdist_register),
+            State;
+        {'EXIT', Error} ->
             lager:notice("NkDIST: Callback ~p could not register: ~p", [Callback, Error]),
             erlang:send_after(500, self(), nkdist_register),
             State
