@@ -28,7 +28,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/3, start/3, get_master/2, call/2, call/3, cast/2]).
+-export([start_link/3, start/3, get_master/1, get_master/2, call/2, call/3, cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -95,6 +95,14 @@ start(Callback, Arg, Opts) ->
     gen_server:start({local, Callback}, ?MODULE, {Callback, Arg}, Opts).
 
 
+%% @doc Equivalent to get_master(Callback, 5000).
+-spec get_master(atom()) ->
+    {ok, pid()|undefined}.
+
+get_master(Callback) ->
+    get_master(Callback, 5000).
+
+
 %% @doc Gets the current master
 -spec get_master(atom(), pos_integer()) ->
     {ok, pid()|undefined}.
@@ -157,7 +165,7 @@ cast(Callback, Msg) ->
 
 %% @private 
 init({Callback, Arg}) ->
-    State = send_register(#state{callback=Callback}),
+    State = register(#state{callback=Callback}),
     nklib_gen_server:init(Arg, State, ?POSMOD, ?POSUSER).
 
 
@@ -175,15 +183,8 @@ handle_cast(Msg, State) ->
 
 
 %% @private
-handle_info(nkdist_register, #state{callback=Callback}=State) ->
-    case nkdist:register(Callback) of
-        {ok, VNode} ->
-            monitor(process, VNode),
-            {noreply, State#state{vnode=VNode}};
-        {error, Error} ->
-            lager:notice("NkDIST: Callback ~p could not register: ~p", [Callback, Error]),
-            {noreply, send_register(State)}
-    end;
+handle_info(nkdist_register, State) ->
+    {noreply, register(State)};
 
 handle_info({nkdist_master, _Callback, Master}, #state{master=Master}=State) ->
     {noreply, State};
@@ -202,7 +203,8 @@ handle_info({'DOWN', _Ref, process, Pid, Reason}, #state{vnode=Pid}=State) ->
         normal -> lager:info("NkDIST master: vnode has stopped");
         _ -> lager:warning("NkDIST master: vnode has failed: ~p", [Reason])
     end,
-    {noreply, send_register(State)};
+    self() ! {nkdist_master, State#state.callback, undefined},
+    {noreply, register(State)};
 
 handle_info(Info, State) -> 
     nklib_gen_server:handle_info(Info, State, ?POSMOD, ?POSUSER).
@@ -228,13 +230,17 @@ terminate(Reason, State) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Internal %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-send_register(#state{callback=Callback}=State) ->
-    self() ! {nkdist_master, Callback, undefined},
-    erlang:send_after(500, self(), nkdist_register),
-    State#state{master=undefined}.
-
-
-
+%% @private
+register(#state{callback=Callback}=State) ->
+    case nkdist:register(Callback) of
+        {ok, VNode} ->
+            monitor(process, VNode),
+            State#state{vnode=VNode};
+        {error, Error} ->
+            lager:notice("NkDIST: Callback ~p could not register: ~p", [Callback, Error]),
+            erlang:send_after(500, self(), nkdist_register),
+            State
+    end.
 
 
 

@@ -219,6 +219,9 @@ handle_coverage({get_procs, CallBack}, _KeySpaces, _Sender, State) ->
 		maps:to_list(Procs)),
 	{reply, {vnode, Idx, node(), {done, Data}}, State};
 
+handle_coverage(get_masters, _KeySpaces, _Sender, State) ->
+	#state{masters=Masters, idx=Idx} = State,
+	{reply, {vnode, Idx, node(), {done, Masters}}, State};
 
 handle_coverage(Cmd, _KeySpaces, _Sender, State) ->
 	lager:error("Module ~p unknown coverage: ~p", [?MODULE, Cmd]),

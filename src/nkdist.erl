@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find_proc/1, find_proc_in_vnode/1, start_proc/3, get_procs/0, get_procs/1]).
--export([register/1, get_vnode/1]).
+-export([register/1, get_masters/0, get_vnode/1]).
 
 -export_type([proc_id/0, vnode_id/0]).
 -include("nkdist.hrl").
@@ -100,10 +100,9 @@ start_proc(ProcId, CallBack, Args) ->
 -spec get_procs() ->
     {ok, [{proc_id(), module(), pid()}]}.
 
-
 get_procs() ->
-	Fun = fun(Data, Acc) -> Data++Acc end,
-	nkdist_coverage:launch(get_procs, 1, 10000, Fun, []).
+    Fun = fun(Data, Acc) -> Data++Acc end,
+    nkdist_coverage:launch(get_procs, 1, 10000, Fun, []).
 
 
 %% @doc Gets all stared processes in the cluster belonging to this callback
@@ -134,17 +133,26 @@ register(Class) ->
     end.
 
 
+%% @doc Gets all stared processes in the cluster
+-spec get_masters() ->
+    {ok, #{atom() => [pid()]}}.
+
+get_masters() ->
+    Fun = fun(Map, Acc) -> maps:merge(Acc, Map) end,
+    nkdist_coverage:launch(get_masters, 1, 10000, Fun, #{}).
+
+
 %% ===================================================================
 %% Private
 %% ===================================================================
 
 
 %% @private
--spec get_vnode(proc_id()) ->
+-spec get_vnode(term()) ->
     {ok, vnode_id()} | error.
 
-get_vnode(ProcId) ->
-	DocIdx = riak_core_util:chash_key({?APP, ProcId}),
+get_vnode(Term) ->
+	DocIdx = riak_core_util:chash_key({?APP, Term}),
 	% We will get the associated IDX to this process, with a node that is
 	% currently available. 
 	% If it is a secondary vnode (the node with the primary has failed), 
