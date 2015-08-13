@@ -400,6 +400,7 @@ do_register(Name, Pid, #state{masters=Masters, pids=Pids}=State) ->
 	MasterPids = maps:get(Name, Masters, []),
 	case lists:member(Pid, MasterPids) of
 		true ->
+			send_master(Name, MasterPids),
 			State;
 		false ->
 			monitor(process, Pid),
@@ -423,9 +424,6 @@ started_proc(ProcId, CallBack, Pid, #state{procs=Procs, pids=Pids}=State) ->
 send_master(Name, [Master|_]=Pids) ->
 	lists:foreach(fun(Pid) -> Pid ! {nkdist_master, Name, Master} end, Pids).
 	
-% %% @private Say no master to everyone
-% send_no_master(Name, Pids) ->
-% 	lists:foreach(fun(Pid) -> Pid ! {nkdist_master, Name, undefined} end, Pids).
 
 
 
