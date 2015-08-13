@@ -180,8 +180,8 @@ handle_info(nkdist_register, #state{callback=Callback}=State) ->
         {ok, VNode} ->
             monitor(process, VNode),
             {noreply, State#state{vnode=VNode}};
-        _ ->
-            lager:notice("NkDIST: Callback ~p could not register", [Callback]),
+        {error, Error} ->
+            lager:notice("NkDIST: Callback ~p could not register: ~p", [Callback, Error]),
             {noreply, send_register(State)}
     end;
 
