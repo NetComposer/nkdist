@@ -412,7 +412,13 @@ check_down_proc(Pid, Reason, #state{procs=Procs, proc_pids=Pids}=State) ->
 		undefined ->
 			undefined;
 		{CallBack, ProcId} ->
-			lager:info("NkDIST proc '~p:~p' down (~p)", [CallBack, ProcId, Reason]),
+			case Reason of
+				normal -> 
+					ok;
+				_ ->
+					lager:info("NkDIST proc '~p:~p' down (~p)", 
+							   [CallBack, ProcId, Reason])
+			end,
 			Procs1 = maps:remove({CallBack, ProcId}, Procs),
 			Pids1 = maps:remove(Pid, Pids),
 			State#state{procs=Procs1, proc_pids=Pids1}
