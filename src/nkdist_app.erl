@@ -48,10 +48,7 @@ start() ->
     ok | {error, Reason::term()}.
 
 start(Type) ->
-    application:load(riak_core),
-    {ok, DataDir} = application:get_env(riak_core, platform_data_dir),
-    RingFile = filename:join([DataDir, "ring", "dummy"]),
-    filelib:ensure_dir(RingFile),
+    nkdist_util:ensure_dir(),
     case nklib_util:ensure_all_started(?APP, Type) of
         {ok, _Started} ->
             riak_core:wait_for_service(nkdist),

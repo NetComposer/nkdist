@@ -21,12 +21,19 @@
 -module(nkdist_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([store_idx_cache/0, idx2pos/0, idx2pos/1, pos2idx/1]).
+-export([ensure_dir/0, store_idx_cache/0, idx2pos/0, idx2pos/1, pos2idx/1]).
 
 
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+ensure_dir() ->
+    application:load(riak_core),
+    {ok, DataDir} = application:get_env(riak_core, platform_data_dir),
+    RingFile = filename:join([DataDir, "ring", "dummy"]),
+    filelib:ensure_dir(RingFile).
+
 
 %% @private Stored a mapping from (long) IDX numbers to short indices
 store_idx_cache() ->
