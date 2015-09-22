@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find_proc/2, find_proc_in_vnode/2, start_proc/3, get_procs/0, get_procs/1]).
--export([register/1, get_masters/0, get_vnode/1]).
+-export([register/1, get_masters/0, get_vnode/1, get_vnode/2]).
 -export([get_info/0]).
 
 -export_type([proc_id/0, vnode_id/0]).
@@ -42,17 +42,18 @@
 %% Public
 %% ===================================================================
 
+
 %% @doc Finds a process pid
 -spec find_proc(module(), proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
 find_proc(CallBack, ProcId) ->
-	case nklib_proc:values({?APP, CallBack, ProcId}) of
-		[{_, Pid}|_] ->
-			{ok, Pid};
-		[] ->
-			find_proc_in_vnode(CallBack, ProcId)
-	end.
+    case nklib_proc:values({?APP, CallBack, ProcId}) of
+        [{_, Pid}|_] ->
+            {ok, Pid};
+        [] ->
+            find_proc_in_vnode(CallBack, ProcId)
+    end.
 
 
 %% @doc Finds a process pid directly in vnode
@@ -61,7 +62,7 @@ find_proc(CallBack, ProcId) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
 find_proc_in_vnode(CallBack, ProcId) ->
-	case get_vnode(ProcId) of
+	case get_vnode(CallBack, ProcId) of
         {ok, VNodeId} ->
             case nkdist_vnode:find_proc(VNodeId, CallBack, ProcId) of
             	{ok, Pid} ->
@@ -80,7 +81,7 @@ find_proc_in_vnode(CallBack, ProcId) ->
     {ok, pid()} | {error, {already_started, pid()}} | {error, term()}.
 
 start_proc(CallBack, ProcId, Args) ->
-    case get_vnode(ProcId) of
+    case get_vnode(CallBack, ProcId) of
         {ok, VNodeId} ->
             case nkdist_vnode:start_proc(VNodeId, CallBack, ProcId, Args) of
             	{ok, Pid} ->
@@ -154,11 +155,25 @@ get_masters() ->
     {ok, vnode_id()} | error.
 
 get_vnode(Term) ->
-	DocIdx = riak_core_util:chash_key({?APP, Term}),
-	% We will get the associated IDX to this process, with a node that is
-	% currently available. 
-	% If it is a secondary vnode (the node with the primary has failed), 
-	% a handoff process will move the process back to the primary
+    get_vnode(undefined, Term).
+
+%% @private
+-spec get_vnode(module(), term()) ->
+    {ok, vnode_id()} | error.
+
+get_vnode(Module, Term) ->
+    DocIdx = case 
+        Module/=undefined andalso erlang:function_exported(Module, get_hash, 1) 
+    of
+        true ->
+            Module:get_hash(Term);
+        false ->
+            chash:key_of(Term)
+    end,
+    % We will get the associated IDX to this process, with a node that is
+    % currently available. 
+    % If it is a secondary vnode (the node with the primary has failed), 
+    % a handoff process will move the process back to the primary
     case riak_core_apl:get_apl(DocIdx, 1, ?APP) of
         [{Idx, Node}] -> {ok, {Idx, Node}};
         [] -> error

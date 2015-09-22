@@ -60,4 +60,10 @@
 	ok | {error, term()}.
 
 
+%% @doc Optional callback to use a custom hashing function
+%% -callback get_hash(nkdist:proc_id()) ->
+%% 		binary(). 
+
+
+
 
