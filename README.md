@@ -95,14 +95,14 @@ Until the moment where the faillure is detected by the _Erlang distributed syste
 
 # Master management
 
-NkDIST has also support for (eventually consistent) master election. You can use `nkdisp:register/1` to register a process, belonging to a _class_ of processes. For each class, a _master_ will be elected, and the message `{nkcluster, Class, MasterPid}` will be sent to all registered processes.
+NkDIST has support for (eventually consistent) master election. You can use `nkdist:register/1` to register a process, belonging to a _class_ of processes. For each class, a _master_ will be elected, and the message `{nkcluster, Class, MasterPid}` will be sent to all registered processes.
 
 When calling `nkdist:register/1` you get the `pid()` of the corresponding _vnode_ so that you can monitor it, and re-register if it fails.
 
 
 ## NkDIST gen_master behaviour
 
-NkDIST includes also a _gen_server-like_ behaviour, [`nkdist_gen_server`](src/nkdist_gen_server.erl). It is very similar to a standard _gen_server_, but it elects a master among all started processes in the cluster with the same callback module. 
+NkDIST includes a _gen_server-like_ behaviour, [`nkdist_gen_server`](src/nkdist_gen_server.erl). It is very similar to a standard OTP _gen_server_, but it elects a master among all started processes in the cluster with the same callback module. 
 
 A new callback must be implemented, `handle_master/2`. It is called everytime a new (or the same) master is elected, with the `pid()` of the master, or `undefined` if no master is currently available (because of the temporary failure of the vnode).
 

@@ -119,7 +119,7 @@ start_vnode(I) ->
 	pos :: integer(),
 	procs :: #{{module(), nkdist:proc_id()} => pid()},
 	proc_pids :: #{pid() => {module(), nkdist:proc_id()}},
-	masters :: #{atom() => [pid()]},			% first is master
+	masters :: #{atom() => [pid()]},			% first pid is master
 	master_pids :: #{pid() => atom()},
     handoff_target :: {chash:index_as_int(), node()},
     forward :: node() | [{integer(), node()}]
