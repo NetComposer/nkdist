@@ -186,6 +186,7 @@ handle_cast(Msg, State) ->
 handle_info(nkdist_register, State) ->
     {noreply, register(State)};
 
+%% called from the vnode
 handle_info({nkdist_master, _Callback, Master}, #state{master=Master}=State) ->
     {noreply, State};
 
