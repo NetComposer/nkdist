@@ -1,6 +1,6 @@
 {application, nkdist, [
     {description, "Nekso Distributed Library"},
-    {vsn, "0.2.0"},
+    {vsn, "master"},
     {modules, []},
     {registered, []},
     {mod, {nkdist_app, []}},
