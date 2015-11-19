@@ -24,7 +24,7 @@
 
 -behaviour(riak_core_vnode).
 
--export([get_info/1, find_proc/3, start_proc/4, register/3]).
+-export([get_info/1, find_proc/3, start_proc/4, register/3, get_registered/2]).
 
 -export([start_vnode/1,
          init/1,
@@ -79,9 +79,16 @@ start_proc({Idx, Node}, CallBack, ProcId, Args) ->
 -spec register(nkdist:vnode_id(), atom(), pid()) ->
 	{ok, VNode::pid()} | {error, term()}.
 
-
 register({Idx, Node}, Name, Pid) ->
 	command({Idx, Node}, {register, Name, Pid}).
+
+
+%% @private
+-spec get_registered(nkdist:vnode_id(), atom()) ->
+	{ok, [pid()]} | {error, term()}.
+
+get_registered({Idx, Node}, Name) ->
+	command({Idx, Node}, {get_registered, Name}).
 
 
 %% @private
@@ -176,6 +183,9 @@ handle_command({start_proc, CallBack, ProcId, Args}, _Sender, State) ->
 handle_command({register, Name, Pid}, _Send, State) ->
 	State1 = do_register(Name, Pid, State),
 	{reply, {ok, self()}, State1};
+
+handle_command({get_registered, Name}, _Send, #state{masters=Masters}=State) ->
+	{reply, {ok, maps:get(Name, Masters, [])}, State};
 
 handle_command(Message, _Sender, State) ->
     lager:warning("NkDIST vnode: Unhandled command: ~p, ~p", [Message, _Sender]),

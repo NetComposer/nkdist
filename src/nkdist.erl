@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find_proc/2, find_proc_in_vnode/2, start_proc/3, get_procs/0, get_procs/1]).
--export([register/1, get_masters/0, get_vnode/1, get_vnode/2]).
+-export([register/1, get_registered/1, get_masters/0, get_vnode/1, get_vnode/2]).
 -export([get_info/0]).
 
 -export_type([proc_id/0, vnode_id/0]).
@@ -107,7 +107,7 @@ get_procs() ->
     nkdist_coverage:launch(get_procs, 1, 10000, Fun, []).
 
 
-%% @doc Gets all stared processes in the cluster belonging to this callback
+%% @doc Gets all started processes in the cluster belonging to this callback
 -spec get_procs(module()) ->
     {ok, [{proc_id(), pid()}]}.
 
@@ -135,7 +135,26 @@ register(Class) ->
     end.
 
 
-%% @doc Gets all stared processes in the cluster
+%% @doc Registers a master class
+%% NkDIST will keep at a specific VNode the list of pids of all 
+%% processes calling this function, and will send to all the message 
+%% {nkdist_master, Class, pid()}, with the pid of the first
+%% successfully registered process.
+%% If this dies, the next one will be selected and sent to all.
+%% See nkdist_gen_server
+-spec get_registered(atom()) ->
+    {ok, [pid()]} | {error, term()}.
+
+get_registered(Class) ->
+    case get_vnode(Class) of
+        {ok, VNodeId} ->
+            nkdist_vnode:get_registered(VNodeId, Class);
+        error ->
+            {error, no_vnode}
+    end.
+
+
+%% @doc Gets all started masters in the cluster
 -spec get_masters() ->
     {ok, #{atom() => [pid()]}}.
 
