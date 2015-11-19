@@ -29,6 +29,7 @@
 -behaviour(gen_server).
 
 -export([start_link/3, start/3, get_master/1, get_master/2, call/2, call/3, cast/2]).
+-export([multi_call/3, multi_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -133,6 +134,27 @@ call(Callback, Msg, Timeout) ->
 
 
 %% @doc Cals to the current master
+-spec multi_call(atom(), term(), pos_integer()|infinity) ->
+    [{node(), term()|error}] | {error, term()}.
+
+multi_call(Callback, Msg, Timeout) ->
+    case nkdist:get_registered(Callback) of
+        {ok, Pids} ->
+            Nodes = [node(Pid) || Pid <- Pids],
+            {Replies, Bad} = gen_server:multi_call(Nodes, Callback, Msg, Timeout),
+            case Bad of
+                [] ->
+                    Replies;
+                _ ->
+                    lager:warning("Nodes failed in multi_call: ~p", [Bad]),
+                    Replies ++ [{Node, error} || Node <- Bad]
+            end;
+       {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Cals to the current master
 -spec cast(atom(), term()) ->
     ok | {error, no_master}.
 
@@ -143,6 +165,22 @@ cast(Callback, Msg) ->
         {ok, undefined} ->
             {error, no_master}
     end.
+
+
+%% @doc Send a cast to all registered processes
+-spec multi_cast(atom(), term()) ->
+    ok | {error, term()}.
+
+multi_cast(Callback, Msg) ->
+    case nkdist:get_registered(Callback) of
+        {ok, Pids} ->
+            lists:foreach(
+                fun(Pid) -> gen_server:cast(Pid, Msg) end,
+                Pids);
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 
