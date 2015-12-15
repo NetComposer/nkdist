@@ -182,7 +182,7 @@ get_vnode(Term) ->
 
 get_vnode(Module, Term) ->
     DocIdx = case 
-        Module/=undefined andalso erlang:function_exported(Module, get_hash, 1) 
+        Module/=undefined andalso erlang:function_exported(Module, nkdist_hash, 1) 
     of
         true ->
             Module:get_hash(Term);
