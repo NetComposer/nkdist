@@ -62,7 +62,7 @@ start(Type) ->
 start(_Type, _Args) ->
     {ok, Vsn} = application:get_key(?APP, vsn),
     nkdist_util:store_idx_cache(),
-    lager:notice("NkDIST v~s is starting", [Vsn]),
+    lager:info("NkDIST v~s is starting", [Vsn]),
     {ok, Pid} = nkdist_sup:start_link(),
     riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
     %% Force the creation of vnodes before waiting for 
