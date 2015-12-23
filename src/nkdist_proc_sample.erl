@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 -behaviour(nkdist_proc).
 
--export([start/2, start_and_join/2, join/2]).
+-export([nkdist_start/2, nkdist_start_and_join/2, nkdist_join/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,   
          handle_cast/2, handle_info/2]).
 
@@ -13,13 +13,13 @@
 %% ===================================================================
 
 
-start(ProcId, Args) ->
+nkdist_start(ProcId, Args) ->
     gen_server:start_link(?MODULE, {proc_id, ProcId, Args}, []).
 
-start_and_join(ProcId, OldPid) ->
+nkdist_start_and_join(ProcId, OldPid) ->
     gen_server:start_link(?MODULE, {join, ProcId, OldPid}, []).
 
-join(Pid, OldPid) ->
+nkdist_join(Pid, OldPid) ->
     gen_server:call(Pid, {join, OldPid}).
 
 

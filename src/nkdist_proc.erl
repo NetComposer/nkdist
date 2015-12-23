@@ -33,7 +33,7 @@
 %% You must start a new Erlang process and return its pid().
 %% If you link to the calling process (the vnode process), you will receive an
 %% 'EXIT' when the vnode is shutted down.
--callback start(nkdist:proc_id(), Args::term()) ->
+-callback nkdist_start(nkdist:proc_id(), Args::term()) ->
 	{ok, pid()} | {error, term()}.
 
 
@@ -45,7 +45,7 @@
 %% - put it in any "stopping" state so that it does not accept new requests,
 %%   or return the new pid()
 %% - stop the process or schedule its stop once it has no more work to do
--callback start_and_join(nkdist:proc_id(), pid()) ->
+-callback nkdist_start_and_join(nkdist:proc_id(), pid()) ->
 	{ok, pid()} | {error, term()}.
 
 
@@ -56,7 +56,7 @@
 %% stared at both sides of the network
 %% You receive the pid() of the 'winning' process, and the pid() of the old
 %% process, and must 'join' its states and stop the old one.
--callback join(Current::pid(), Old::pid()) ->
+-callback nkdist_join(Current::pid(), Old::pid()) ->
 	ok | {error, term()}.
 
 

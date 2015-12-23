@@ -167,7 +167,7 @@ handle_command({start_proc, CallBack, ProcId, Args}, _Sender, State) ->
 			{reply, {error, {already_started, Pid}}, State};
 		not_found ->
 			try 
-				case CallBack:start(ProcId, Args) of
+				case CallBack:nkdist_start(ProcId, Args) of
 					{ok, Pid} ->
 						State1 = started_proc(CallBack, ProcId, Pid, State),
 						{reply, {ok, Pid}, State1};
@@ -270,7 +270,7 @@ handle_handoff_data(BinObj, State) ->
 			{{proc, CallBack, ProcId}, OldPid} ->
 				case do_find_proc(CallBack, ProcId, State) of
 					not_found ->
-						case CallBack:start_and_join(ProcId, OldPid) of
+						case CallBack:nkdist_start_and_join(ProcId, OldPid) of
 							{ok, NewPid} ->
 								State1 = started_proc(CallBack, ProcId, NewPid, State),
 								{reply, ok, State1};
@@ -278,7 +278,7 @@ handle_handoff_data(BinObj, State) ->
 					 			{reply, {error, Error}, State}
 					 	end;
 					{ok, NewPid} ->
-						case CallBack:join(NewPid, OldPid) of
+						case CallBack:nkdist_join(NewPid, OldPid) of
 							ok ->
 								{reply, ok, State};
 							{error, Error} ->
