@@ -185,7 +185,7 @@ get_vnode(Module, Term) ->
         Module/=undefined andalso erlang:function_exported(Module, nkdist_hash, 1) 
     of
         true ->
-            Module:get_hash(Term);
+            Module:nkdist_hash(Term);
         false ->
             chash:key_of(Term)
     end,

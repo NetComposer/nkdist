@@ -6,9 +6,9 @@ Before starting processes, you must supply one or several callback modules, usin
 
 Name|Desc
 ---|---
-start/2|Called when the start of a new process has been requested for this node. You must start a new Erlang process and return its `pid()`.
-start_and_join/2|Called when an existing process must be moved from an old node to a new node. You receive the `pid()` of the old (still running) process and must start a new process and recover its state from the old one.
-join/2|Called when an existing process must be moved from an old node to a new node, but the process already exists in the new node. You must _join_ them.
+nkdist_start/2|Called when the start of a new process has been requested for this node. You must start a new Erlang process and return its `pid()`.
+nkdist_start_and_join/2|Called when an existing process must be moved from an old node to a new node. You receive the `pid()` of the old (still running) process and must start a new process and recover its state from the old one.
+nkdist_join/2|Called when an existing process must be moved from an old node to a new node, but the process already exists in the new node. You must _join_ them.
 
 This would be a very simple example of a callback module. See the included [nkdist_proc_sample.erl](src/nkdist_proc_sample.erl) for a more complete version:
 
@@ -17,20 +17,20 @@ This would be a very simple example of a callback module. See the included [nkdi
 -behaviour(gen_server).
 -behaviour(nkdist_proc).
 
--export([start/2, start_and_join/2, join/2]).
+-export([nkdist_start/2, nkdist_start_and_join/2, nkdist_join/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,   
          handle_cast/2, handle_info/2]).
 
 
 %% nkdist_proc behaviour
 
-start(ProcId, Args) ->
+nkdist_start(ProcId, Args) ->
     gen_server:start_link(?MODULE, {proc_id, ProcId, Args}, []).
 
-start_and_join(ProcId, OldPid) ->
+nkdist_start_and_join(ProcId, OldPid) ->
     gen_server:start_link(?MODULE, {join, ProcId, OldPid}, []).
 
-join(Pid, OldPid) ->
+nkdist_join(Pid, OldPid) ->
     gen_server:call(Pid, {join, OldPid}).
 
 
@@ -84,6 +84,9 @@ Later on, you can find the `pid()` for the process calling `nkdist:find_proc(pro
 When you add or remove nodes to the _riak_core_ cluster, the _handoff process_ starts and some vnodes must move from the old node to a new node. Each moving vnode will look at its managed processes, and will call `sample:start_and_join/2` at the new node, with the `pid()` of the old process. The callback function must start a new process, get any state from the old process and stop it as soon as possible.
 
 In some rare circumstances (like a network split) it can happen that a process with an specific `proc_id()` is started at two or more nodes at the same time. NkDIST is an _eventually consistent system_, so, once the network is reconnected, _handoffs_ will occur, and, if a node having a process with an specific `proc_id()` receives the _handoff_ from another with the same id, the callback `sample:join/2` would be called. The surviving process receiving the _join_ call must get any state from the old node and reconcile it with its own state, and stop the old node as soon as possible.
+
+In production, and if you plan to start many processes, **you should spend as little time as possible in this callbacks**, since they will block the vnode process. It is recommended using `proc_lib` library to start the process instead of `gen_server`, returning the `pid()` inmediately with `proc_lib:init_ack({ok, self()})
+
 
 
 ## Faillure of nodes
