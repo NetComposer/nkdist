@@ -46,6 +46,8 @@ start_link() ->
         %     infinity,
         %     supervisor,
         %     [?MODULE]}, 
+
+
         {nkdist_coverage_sup, 
             {?MODULE, start_coverage_fsm_sup, []},
             permanent,

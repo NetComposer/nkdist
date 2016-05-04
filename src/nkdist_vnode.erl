@@ -227,7 +227,7 @@ handle_handoff_command({find_proc, CallBack, ProcId}, _Sender, State) ->
 		{ok, Pid} ->
 			{reply, {ok, Pid}, State};
 		not_found ->
-			{forwward, State}
+			{forward, State}
 	end;
 
 handle_handoff_command(Term, _Sender, State) when

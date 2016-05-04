@@ -47,5 +47,6 @@ docs:
 
 
 shell:
-	$(REBAR) shell --config config/sys.config --name nkdist@127.0.0.1 --setcookie nk 
+	mkdir -p data/ring
+	$(REBAR) shell --config config/shell.config --name nkdist@127.0.0.1 --setcookie nk
 
