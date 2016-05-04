@@ -1,10 +1,9 @@
-.eunit
-deps
 *.o
 *.beam
 *.plt
 erl_crash.dump
-ebin
-data
-log
-.rebar
+_build
+rebar3.crashdump
+rebar.lock
+.DS_Store
+rel

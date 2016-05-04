@@ -91,7 +91,7 @@ In production, and if you plan to start many processes, **you should spend as li
 
 ## Faillure of nodes
 
-If a node fails, all processes started at that node will be lost. You must save any important state in an external system (like [NkBASE](https://github.com/Nekso/nkbase)).
+If a node fails, all processes started at that node will be lost. You must save any important state in an external system (like [NkBASE](https://github.com/NetComposer/nkbase)).
 
 Until the moment where the faillure is detected by the _Erlang distributed system_, requests for any vnode index assigned to that node will fail. Once it is detected, a _secondary vnode_ will be created at another node. New processes assigned to this vnode index will be started at the new, _temporary_ node. When the failed node comes back (or it is removed from the cluster), started processes will be moved or joined at the new, primary vnode.
 

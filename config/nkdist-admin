@@ -1,0 +1,905 @@
+#!/bin/bash
+# -*- tab-width:4;indent-tabs-mode:nil -*-
+# ex: ts=4 sw=4 et
+
+# Lost of code taken from https://github.com/basho/riak/blob/635cad6cf706a71714e4f3a90e6c4b950492c115/rel/files/riak-admin
+
+RUNNER_SCRIPT_DIR=$(cd ${0%/*} && pwd)
+RUNNER_SCRIPT=${0##*/}
+
+RUNNER_BASE_DIR=${RUNNER_SCRIPT_DIR%/*}
+RUNNER_ETC_DIR={{platform_etc_dir}}
+RUNNER_LOG_DIR={{log_path}}
+PIPE_DIR=/tmp/{{run_user}}/
+RUNNER_USER={{run_user}}
+
+# Make sure this script is running as the appropriate user
+if [ ! -z "$RUNNER_USER" ] && [ `whoami` != "$RUNNER_USER" ]; then
+    exec sudo -u $RUNNER_USER $0 $@
+fi
+
+# Make sure CWD is set to runner base dir
+cd $RUNNER_BASE_DIR
+
+# Extract the target node name and cookie from vm.args
+if [ ! -f "$RUNNER_ETC_DIR/vm.args" ]; then
+    NODENAME=`egrep '^[ \t]*nodename[ \t]*=[ \t]*' $RUNNER_ETC_DIR/{{cuttlefish_conf}} 2> /dev/null | tail -n 1 | cut -d = -f 2`
+    if [ -z "$NODENAME" ]; then
+        echo "vm.args needs to have a -name parameter."
+        echo "  -sname is not supported."
+        exit 1
+    else
+        NAME_ARG="-name ${NODENAME# *}"
+    fi
+    COOKIE=`egrep '^[ \t]*distributed_cookie[ \t]*=[ \t]*' $RUNNER_ETC_DIR/{{cuttlefish_conf}} 2> /dev/null | cut -d = -f 2`
+    if [ -z "$COOKIE" ]; then
+        echo "vm.args needs to have a -setcookie parameter."
+        exit 1
+    else
+        COOKIE_ARG="-setcookie $COOKIE"
+    fi
+else
+    NAME_ARG=`egrep '^\-name' $RUNNER_ETC_DIR/vm.args 2> /dev/null`
+    if [ -z "$NAME_ARG" ]; then
+        echo "vm.args needs to have a -name parameter."
+        echo "  -sname is not supported."
+        exit 1
+    fi
+    COOKIE_ARG=`grep -e '-setcookie' $RUNNER_ETC_DIR/vm.args 2> /dev/null`
+    if [ -z "$COOKIE" ]; then
+        echo "vm.args needs to have a -setcookie parameter."
+        exit 1
+    fi
+fi
+
+# Learn how to specify node name for connection from remote nodes
+echo "$NAME_ARG" | grep '^-sname' > /dev/null 2>&1
+if [ "X$?" = "X0" ]; then
+    NAME_PARAM="-sname"
+    NAME_HOST=""
+else
+    NAME_PARAM="-name"
+    echo "$NAME_ARG" | grep '@.*' > /dev/null 2>&1
+    if [ "X$?" = "X0" ]; then
+        NAME_HOST=`echo "${NAME_ARG}" | sed -e 's/.*\(@.*\)$/\1/'`
+    else
+        NAME_HOST=""
+    fi
+fi
+
+# Identify the script name
+SCRIPT=`basename $0`
+
+# Parse out release and erts info
+START_ERL=`cat $RUNNER_BASE_DIR/releases/start_erl.data`
+ERTS_VSN=${START_ERL% *}
+APP_VSN=${START_ERL#* }
+
+# Add ERTS bin dir to our path
+ERTS_PATH=$RUNNER_BASE_DIR/erts-$ERTS_VSN/bin
+
+# Setup command to control the node
+NODETOOL="$ERTS_PATH/escript $ERTS_PATH/nodetool $NAME_ARG $COOKIE_ARG"
+
+# Ping node without stealing stdin
+ping_node() {
+    $NODETOOL ping < /dev/null
+}
+
+# Function to validate the node is up
+node_up_check() {
+    MUTE=`ping_node 2> /dev/null`
+    if [ "$?" -ne 0 ]; then
+        echo "Node is not running!"
+        exit 1
+    fi
+}
+# Function to validate the node is down
+node_down_check() {
+    MUTE=`ping_node 2> /dev/null`
+    if [ "$?" -eq 0 ]; then
+        echo "Node is already running!"
+        exit 1
+    fi
+}
+
+run()
+{
+
+    TIMEOUT=""
+    if [ "$1" == "-t" ]
+    then
+        TIMEOUT="-t $2"
+        shift
+        shift
+    fi
+
+    mod=$1
+    shift
+    cmd=$1
+    shift
+
+    node_up_check
+
+    $NODETOOL $TIMEOUT rpc $mod $cmd $@
+}
+
+
+usage() {
+    echo "Usage: $SCRIPT { cluster | join | leave | backup | restore | test | "
+    echo "                    reip | wait-for-service | ringready | transfers | force-remove | down |"
+    echo "                    cluster-info | member-status | ring-status | vnode-status |"
+    echo "                    diag | stat | status | transfer-limit | downgrade-objects | services"
+    echo "                    handoff | set | show | describe }"
+    echo "               connections                        - shows the current connections to other srivces."
+    echo "               ring                               - shows the ring."
+
+}
+
+
+stat_admin()
+{
+    case "$1" in
+        show)
+            shift
+            node_up_check
+            $NODETOOL rpc riak_core_console stat_show "$*"
+            ;;
+        info)
+            shift
+            node_up_check
+            $NODETOOL rpc riak_core_console stat_info "$*"
+            ;;
+        enable)
+            shift
+            node_up_check
+            $NODETOOL rpc riak_core_console stat_enable "$*"
+            ;;
+        disable)
+            shift
+            node_up_check
+            $NODETOOL rpc riak_core_console stat_disable "$*"
+            ;;
+        reset)
+            shift
+            node_up_check
+            $NODETOOL rpc riak_core_console stat_reset "$*"
+            ;;
+        help)
+            shift
+            case $1 in
+                show)
+                    stat_show_help
+                    ;;
+                enable)
+                    stat_enable_help
+                    ;;
+                disable)
+                    stat_enable_help
+                    ;;
+                info)
+                    stat_info_help
+                    ;;
+                *)
+                    stat_help
+            esac
+            ;;
+        *)
+            stat_help
+    esac
+}
+
+stat_help()
+{
+    echo "\
+Usage: $SCRIPT stat <command>
+The following commands display, enable/disable and reset statistics.
+A statistics entry is given either as a 'dotted' exometer name -
+Identifiers separated by periods, '.', e.g. riak.riak_kv.node.gets,
+or as a 'legacy' name (same as in riak-admin status) - e.g. node_gets.
+When a legacy name is listed, the corresponding exometer name is shown as well.
+Two kinds of wildcard are suppored:
+*  - matches anything up to the next separator ('.' or '_') or end of name;
+** - matches anything including separators.
+Quoting is permitted.
+Use \`$SCRIPT stat help <command>\` for more details.
+   show <entry>                Show the value(s) of a specific entry or entries
+   enable <entry>              Enable entry or entries
+   disable <entry>             Disable entry or entries
+   reset <entry>               Reset entry or entries
+   info [ -name | -type |      Display information about the entry or entries.
+        | -module              The attributes are described in the Exometer docs
+        | -value | -cache
+        | -status | -timestamp
+        | -options | -ref
+        | -datapoints ] <entry>
+"
+}
+
+stat_show_help()
+{
+    echo "\
+Usage: $SCRIPT stat show <entry>[/type=<type>][/status=<status>][/<dp>[,<dp>]]
+Show matching stats entries together with corresponding values
+The format of <entry> can be one of:
+- 'Dotted exometer name': In Exometer, entries are represented as [A,B,...].
+These names can be emulated on the command-line as A.B.... Wildcards are
+supported: '*' will match anything between deliminators (dots), whereas
+'**' will match anything including deliminators. Thus \`stat show \"*.**\"\`
+will match all stats entries. All Riak stat entry names start with 'riak',
+so \`stat show riak.**\` will match all riak stat entries.
+Example:
+\$ bin/riak-admin stat show riak.riak_kv.node.gets
+[riak,riak_kv,node,gets]: [{count,0},{one,0}]
+- 'Legacy name': The stat names used e.g. in \`$SCRIPT status\` can be used
+here, but also with wildcard support. The corresponding Exometer name and
+datapoint will be shown as well.
+Example:
+\$ bin/riak-admin stat show node_gets
+== node_gets (Legacy pattern): ==
+node_gets: 0 ([riak,riak_kv,node,gets]/one)
+(Note: A single '*' is treated as a legacy name and would match all such
+names that contain no underscores; to match all exometer names, a '.' must
+be present, so '*.**' would work as a catch-all expression.)
+Each Exometer entry has a type and a set of datapoints. A filter can be
+given on the command line, selecting only a subset of datapoints:
+\$ bin/riak-admin stat show riak.riak_kv.node.gets/one
+[riak,riak_kv,node,gets]: [{one,0}]
+The type can also be restricted:
+\$ bin/riak-admin stat show *.**/type=duration/mean,max
+[riak,riak_core,converge_delay]: [{mean,0},{max,0}]
+[riak,riak_core,rebalance_delay]: [{mean,0},{max,0}]
+Note how multiple datapoints are separated by comma (no space).
+Showing disabled entries:
+\$ bin/riak-admin stat show riak.riak_kv.node.gets
+No matching stats
+\$ bin/riak-admin stat show riak.riak_kv.node.gets/status=*
+[riak,riak_kv,node,gets]: disabled
+\$ bin/riak-admin stat show riak.riak_kv.node.gets/status=disabled
+[riak,riak_kv,node,gets]: disabled
+"
+}
+
+stat_enable_help()
+{
+    echo "\
+Exometer stats can be disabled and enabled, and this can be done from $SCRIPT
+using \`$SCRIPT enable|disable <entry>\`. Disabled entries are not actively
+updated, and have no value.
+The same syntax can be used as in \`stat show\`. The requested action will be
+performed on the matching entries.
+\$ bin/riak-admin stat disable node_gets
+== node_gets (Legacy pattern): ==
+[riak,riak_kv,node,gets]: disabled
+\$ bin/riak-admin stat enable node_gets
+== node_gets (Legacy pattern): ==
+[riak,riak_kv,node,gets]: enabled
+Wildcards can be used:
+\$ bin/riak-admin stat disable riak.riak_kv.node.*
+[riak,riak_kv,node,gets]: disabled
+[riak,riak_kv,node,puts]: disabled
+"
+}
+
+stat_info_help()
+{
+    echo "\
+Display Exometer meta-data for matching entries. Type of data can be controlled
+with options:
+   info [ -name | -type
+        | -module
+        | -value | -cache
+        | -status | -timestamp
+        | -options | -ref
+        | -datapoints ] <entry>
+The same entry formats can be used as for all other stat subcommands.
+Example:
+\$ bin/riak-admin stat info riak.riak_kv.node.gets
+[riak,riak_kv,node,gets]: name = [riak,riak_kv,node,gets]
+                          type = spiral
+                          module = exometer_spiral
+                          value = disabled
+                          cache = 0
+                          status = disabled
+                          timestamp = undefined
+                          options = [{status,disabled}]
+\$ bin/riak-admin stat info -type -status riak.riak_kv.node.gets
+[riak,riak_kv,node,gets]: type = spiral
+                          status = disabled
+"
+}
+
+stat_reset_help()
+{
+    echo "\
+Usage: $SCRIPT stat reset <entry>
+Reset matching stat entries. Only enabled entries can be reset.
+"
+}
+
+cluster_admin()
+{
+    case "$1" in
+        join)
+            if [ $# -ne 2 ]; then
+                echo "Usage: $SCRIPT cluster join <node>"
+                exit 1
+            fi
+            node_up_check
+            $NODETOOL rpc fifo_console staged_join "$2"
+            ;;
+        leave)
+            if [ $# -eq 1 ]; then
+                node_up_check
+                $NODETOOL rpc riak_core_console stage_leave
+            elif [ $# -eq 2 ]; then
+                node_up_check
+                $NODETOOL rpc riak_core_console stage_leave "$2"
+            else
+                echo "Usage: $SCRIPT cluster leave [<node>]"
+                exit 1
+            fi
+            ;;
+        force-remove)
+            if [ $# -ne 2 ]; then
+                echo "Usage: $SCRIPT cluster force-remove <node>"
+                exit 1
+            fi
+            node_up_check
+            $NODETOOL rpc riak_core_console stage_remove "$2"
+            ;;
+        replace)
+            if [ $# -ne 3 ]; then
+                echo "Usage: $SCRIPT cluster replace <node1> <node2>"
+                exit 1
+            fi
+            node_up_check
+            $NODETOOL rpc riak_core_console stage_replace "$2" "$3"
+            ;;
+        force-replace)
+            if [ $# -ne 3 ]; then
+                echo "Usage: $SCRIPT cluster force-replace <node1> <node2>"
+                exit 1
+            fi
+            node_up_check
+            $NODETOOL rpc riak_core_console stage_force_replace "$2" "$3"
+            ;;
+        resize-ring)
+            if [ $# -ne 2 ]; then
+                echo "Usage: $SCRIPT cluster resize-ring <new-ring-size>"
+                echo "       $SCRIPT cluster resize-ring abort"
+                exit 1
+            fi
+            node_up_check
+            $NODETOOL rpc riak_core_console stage_resize_ring "$2"
+            ;;
+        plan)
+            node_up_check
+            $NODETOOL rpc riak_core_console print_staged
+            ;;
+        commit)
+            node_up_check
+            $NODETOOL rpc riak_core_console commit_staged
+            ;;
+        clear)
+            node_up_check
+            $NODETOOL rpc riak_core_console clear_staged
+            ;;
+        status)
+            node_up_check
+            $NODETOOL rpc riak_core_console command riak-admin cluster $@riak
+            ;;
+        partitions|partition)
+            node_up_check
+            $NODETOOL rpc riak_core_console command riak-admin cluster $@
+            ;;
+        partition[_-]count)
+            node_up_check
+            shift
+            $NODETOOL rpc riak_core_console command riak-admin cluster partition-count $@
+            ;;
+        *)
+            echo "\
+Usage: $SCRIPT cluster <command>
+The following commands stage changes to cluster membership. These commands
+do not take effect immediately. After staging a set of changes, the staged
+plan must be committed to take effect:
+   join <node>                     Join node to the cluster containing <node>
+   leave                           Have this node leave the cluster and shutdown
+   leave <node>                    Have <node> leave the cluster and shutdown
+   force-remove <node>             Remove <node> from the cluster without
+                                   first handing off data. Designed for
+                                   crashed, unrecoverable nodes
+   replace <node1> <node2>         Have <node1> transfer all data to <node2>,
+                                   and then leave the cluster and shutdown
+   force-replace <node1> <node2>   Reassign all partitions owned by <node1> to
+                                   <node2> without first handing off data, and
+                                   remove <node1> from the cluster.
+Staging commands:
+   plan                            Display the staged changes to the cluster
+   commit                          Commit the staged changes
+   clear                           Clear the staged changes
+Status and information commands:
+   status                          Display a concise summary of node membership
+                                   availability and ring ownership.
+   partitions [--node=<node>]      Print primary, secondary and stopped
+                                   partition indices and ids for the current
+                                   node, or for the specified node.
+   partition-count [--node=<node>] Print the cluster-wide number of
+                                   partitions or the number of partitions
+                                   on the specified node.
+   partition id=<id>               Convert the given partition id to the
+                                   matching index.
+   partition index=<index>         Convert the given partition index to
+                                   the matching id.
+"
+    esac
+}
+
+
+# Check the first argument for instructions
+case "$1" in
+    join)
+        if [ "$2" != "-f" ]; then
+            echo "The 'join' command has b deen deprecated in favor of the new "
+            echo "clustering commands provided by '$SCRIPT cluster'. To continue "
+            echo "using the deprecated 'join' command, use 'join -f'"
+            exit 1
+        fi
+
+        if [ $# -ne 3 ]; then
+            echo "Usage: $SCRIPT join -f <node>"
+            exit 1
+        fi
+
+        # Make sure the local node IS running
+        node_up_check
+
+        $NODETOOL rpc fifo_console join "$3"
+        ;;
+
+    leave)
+        if [ "$2" != "-f" ]; then
+            echo "The 'leave' command has been deprecated in favor of the new "
+            echo "clustering commands provided by '$SCRIPT cluster'. To continue "
+            echo "using the deprecated 'leave' command, use 'leave -f'"
+            exit 1
+        fi
+
+        if [ $# -ne 2 ]; then
+            echo "Usage: $SCRIPT leave -f"
+            exit 1
+        fi
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console leave
+        ;;
+
+    remove)
+        echo "The 'remove' command no longer exists. If you want a node to"
+        echo "safely leave the cluster (handoff its data before exiting),"
+        echo "then execute 'leave' on the desired node. If a node is down and"
+        echo "unrecoverable (and therefore cannot be safely removed), then"
+        echo "use the 'force-remove' command. A force removal drops all data"
+        echo "owned by the removed node. Read-repair can be used to restore"
+        echo "lost replicas."
+        exit 1
+        ;;
+
+    force[_-]remove)
+        if [ "$2" != "-f" ]; then
+            echo "The 'force-remove' command has been deprecated in favor of the new "
+            echo "clustering commands provided by '$SCRIPT cluster'. To continue "
+            echo "using the deprecated 'force-remove' command, use 'force-remove -f'"
+            exit 1
+        fi
+
+        if [ $# -ne 3 ]; then
+            echo "Usage: $SCRIPT force-remove -f <node>"
+            exit 1
+        fi
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console remove "$3"
+        ;;
+
+    down)
+        if [ $# -ne 2 ]; then
+            echo "Usage: $SCRIPT down <node>"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console down "$@"
+        ;;
+
+    status)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT status"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console status "$@"
+        ;;
+
+    vnode[_-]status)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT $1"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console vnode_status "$@"
+        ;;
+
+    ringready)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT ringready"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console ringready "$@"
+        ;;
+
+    transfers)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT transfers"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc riak_core_console transfers "$@"
+        ;;
+
+    member[_-]status)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT $1"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc riak_core_console member_status "$@"
+        ;;
+
+    ring[_-]status)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT $1"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc riak_core_console ring_status "$@"
+        ;;
+
+    ensemble[_-]status)
+        if [ $# -ne 1 ] && [ $# -ne 2 ]; then
+            echo "Usage: $SCRIPT $1 [<ensemble>]"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc fifo_console ensemble_status "$@"
+        ;;
+
+    cluster[_-]info)
+        if [ $# -lt 2 ]; then
+            echo "Usage: $SCRIPT $1 <output_file> ['local' | <node> ['local' | <node>] [...]]"
+            exit 1
+        fi
+        shift
+
+        # Make sure the local node is running
+        node_up_check
+
+        $NODETOOL rpc_infinity fifo_console cluster_info "$@"
+        ;;
+
+    services)
+        if [ $# -ne 1 ]; then
+            echo "Usage: $SCRIPT $1"
+            echo ""
+            echo "Lists the services available on the node. See also: wait-for-service"
+            exit 1
+        fi
+        $NODETOOL rpcterms riak_core_node_watcher services ''
+        ;;
+
+    wait[_-]for[_-]service)
+        SVC=$2
+        TARGETNODE=$3
+        if [ $# -lt 2 ]; then
+            echo "Usage: $SCRIPT $1 <service_name> [<target_node>]"
+            exit 1
+        fi
+
+        while (true); do
+            # Make sure riak_core_node_watcher is up and running locally before trying to query it
+            # to avoid ugly (but harmless) error messages
+            NODEWATCHER=`$NODETOOL rpcterms erlang whereis "'riak_core_node_watcher'."`
+            if [ "$NODEWATCHER" = "undefined" ]; then
+                echo "$SVC is not up: node watcher is not running"
+                continue
+            fi
+
+            # Get the list of services that are available on the requested node
+            # If no node is specified, get the list of services from the local node
+            if [ "X$TARGETNODE" = "X" ]; then
+                SERVICES=`$NODETOOL rpcterms riak_core_node_watcher services ''`
+            else
+                SERVICES=`$NODETOOL rpcterms riak_core_node_watcher services "'${TARGETNODE}'."`
+            fi
+            echo "$SERVICES" | grep "[[,]$SVC[],]" > /dev/null 2>&1
+            if [ "X$?" = "X0" ]; then
+                echo "$SVC is up"
+                exit 0
+            else
+                echo "$SVC is not up: $SERVICES"
+            fi
+            sleep 3
+        done
+        ;;
+
+    reip)
+        ACTION=$1
+        shift
+        if [ $# -lt 2 ]; then
+            echo "Usage $SCRIPT $ACTION <old_nodename> <new_nodename>"
+            exit 1
+        fi
+
+        # Make sure the local node is not running
+        node_down_check
+
+        # Sanity check the app.config file
+        check_config
+        ES=$?
+        if [ "$ES" -ne 0 ]; then
+            exit $ES
+        fi
+
+        OLDNODE=$1
+        NEWNODE=$2
+        $ERTS_PATH/erl -noshell \
+                       -pa $RUNNER_LIB_DIR/basho-patches \
+                       $CONFIG_ARGS \
+                       -eval "fifo_console:$ACTION(['$OLDNODE', '$NEWNODE'])" \
+                       -s init stop
+        ;;
+
+    ## Riak command groups
+    cluster)
+        shift
+        cluster_admin "$@"
+        ;;
+    stat)
+        shift
+        stat_admin "$@"
+        ;;
+    handoff)
+        # New pattern for command line. Use nodetool for RPC
+        node_up_check
+        exec $NODETOOL rpc riak_core_console command riak-admin $@
+        ;;
+    users)
+        shift
+        node_up_check
+        case "$1" in
+            list)
+                shift
+                $NODETOOL rpc snarl_console list_user $@
+                ;;
+            add)
+                shift
+                $NODETOOL rpc snarl_console add_user $@
+                ;;
+            join)
+                shift
+                $NODETOOL rpc snarl_console join_role $@
+                ;;
+            leave)
+                shift
+                $NODETOOL rpc snarl_console leave_role $@
+                ;;
+            passwd)
+                shift
+                $NODETOOL rpc snarl_console passwd $@
+                ;;
+            grant)
+                shift
+                $NODETOOL rpc snarl_console grant_user $@
+                ;;
+            revoke)
+                shift
+                $NODETOOL rpc snarl_console revoke_user $@
+                ;;
+            "delete")
+                shift
+                $NODETOOL rpc snarl_console delete_user $@
+                ;;
+            "export")
+                shift
+                $NODETOOL rpc snarl_console export_user $@
+                ;;
+            "import")
+                shift
+                $NODETOOL rpc snarl_console import_user $@
+                ;;
+            *)
+                echo "Usage: snarl-admin users { add | passwd | join | leave "
+                echo "                           grant | revoke }."
+                exit 1
+                ;;
+        esac
+        ;;
+    roles)
+        shift
+        node_up_check
+        case "$1" in
+            list)
+                shift
+                $NODETOOL rpc snarl_console list_role $@
+                ;;
+            add)
+                shift
+                $NODETOOL rpc snarl_console add_role $@
+                ;;
+            grant)
+                shift
+                $NODETOOL rpc snarl_console grant_role $@
+                ;;
+            revoke)
+                shift
+                $NODETOOL rpc snarl_console revoke_role $@
+                ;;
+            "delete")
+                shift
+                $NODETOOL rpc snarl_console delete_role $@
+                ;;
+            "export")
+                shift
+                $NODETOOL rpc snarl_console export_role $@
+                ;;
+            "import")
+                shift
+                $NODETOOL rpc snarl_console import_role $@
+                ;;
+            *)
+                echo "Usage: snarl-admin roles { list | add | grant | revoke }."
+                exit 1
+                ;;
+        esac
+        ;;
+
+
+    config)
+        shift
+        node_up_check
+        $NODETOOL rpc snarl_console config $@
+        ;;
+    db)
+        shift
+        node_up_check
+        case "$1" in
+            list)
+                shift
+                $NODETOOL rpc snarl_console db_keys $@
+                ;;
+            get)
+                shift
+                $NODETOOL rpc snarl_console db_get $@
+                ;;
+            delete)
+                shift
+                $NODETOOL rpc snarl_console db_delete $@
+                ;;
+            update)
+                shift
+                $NODETOOL rpc -t infinity snarl_console db_update $@
+                ;;
+        esac
+        ;;
+    scope)
+        shift
+        node_up_check
+        case "$1" in
+            list)
+                shift
+                $NODETOOL rpc snarl_console scope_list $@
+                ;;
+            add)
+                shift
+                $NODETOOL rpc snarl_console scope_add $@
+                ;;
+            delete)
+                shift
+                $NODETOOL rpc snarl_console scope_del $@
+                ;;
+            grant)
+                shift
+                $NODETOOL rpc snarl_console scope_grant $@
+                ;;
+            revoke)
+                shift
+                $NODETOOL rpc snarl_console scope_revoke $@
+                ;;
+            toggle)
+                shift
+                $NODETOOL rpc snarl_console scope_toggle $@
+                ;;
+        esac
+        ;;
+    init)
+        shift
+        node_up_check
+        $NODETOOL rpc snarl_console init_user $@
+        ;;
+
+    *)
+        echo "Usage: $SCRIPT { join | leave | reip | ringready | remove |"
+        echo "                 services | wait-for-service | member_status |"
+        echo "                 ring_status | status}"
+        echo "               ring                                       - shows the ring."
+        echo "               db update [<section>]                      - lists db entries."
+        echo "               db list [-p <prefix>]                      - lists db entries."
+        echo "               db list <hash> [<prefix>]                  - lists db entries for a hash."
+        echo "               db get <hash> <realm> <bucket> <key>       - gets raw data from the db."
+        echo "               db delete <hash> <prefix> <key>            - deletes directly from db."
+        echo "               config show                                - shows global config options."
+        echo "               config show <realm>                        - shows relm related config options."
+        echo "               config set <key> <value>                   - sets global config options."
+        echo "               users list <realm>                         - list users."
+        echo "               users add <realm> <user>                   - adds a new user."
+        echo "               users delete <realm> <uuid>                - deletes a user."
+        echo "               users passwd <realm> <user> <passwd>       - sets user password."
+        echo "               users grant <realm> <user> <permission>    - grants a permission."
+        echo "               users revoke <realm> <user> <permission>   - revokes a permission"
+        echo "               users join <realm> <user> <role>           - adds user to a role."
+        echo "               users leave <realm> <user> <role>          - removes user from a role."
+        echo "               users export <realm> <uuid>                - Exports a user to a json file."
+        echo "               users import <realm> <file>                - imports a user json file."
+        echo "               roles add <realm> <role>                   - adds a role."
+        echo "               roles delete <realm> <uuid>                - deletes a role."
+        echo "               roles grant <realm> <role> <permission>    - grants a permission."
+        echo "               roles revoke <realm> <role> <permission>   - revokes a permission."
+        echo "               roles export <realm> <uuid>                - Exports a role to a json file."
+        echo "               role import <realm> <file>                 - imports a role json file."
+        echo "               scope list <realm>                         - lists all the scopes in a realm."
+        echo "               scope add <realm> <scope> <description>    - Adds a scope."
+        echo "               scope del <realm> <scope>                  - Deletes a scope."
+        echo "               scope grant <realm> <scope> <permission>   - grants a permission to a scope."
+        echo "               scope revoke <realm> <scope> <permission>  - revokes a permission to a scope."
+        echo "               scope toggle <realm> <scope>               - toggles weather this is part of the default scope."
+        echo "               intit <realm> <org> <role> <user> <pass>   - initializes a realm with a fresh org and user and role."
+        exit 1
+        ;;
+esac
