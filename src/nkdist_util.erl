@@ -28,11 +28,28 @@
 %% Public
 %% ===================================================================
 
+%% @doc ensures the data directory is available
 ensure_dir() ->
     application:load(riak_core),
     {ok, DataDir} = application:get_env(riak_core, platform_data_dir),
     RingFile = filename:join([DataDir, "ring", "dummy"]),
     filelib:ensure_dir(RingFile).
+
+%% @doc Converts a vnode IDX into a relative pos
+idx2pos(Idx) ->
+	{Pos, Idx} = lists:keyfind(Idx, 2, idx2pos()),
+	Pos.
+	
+
+%% @doc Converts a vnode relative pos into its IDX
+pos2idx(Num) ->	
+	{Num, Idx} = lists:keyfind(Num, 1, idx2pos()),
+	Idx.
+	
+
+%% @doc Gets all IDX-Pos mappings
+idx2pos() ->
+	'mochiglobal:nkdist_idx2pos':term().
 
 
 %% @private Stored a mapping from (long) IDX numbers to short indices
@@ -48,20 +65,8 @@ store_idx_cache() ->
 	riak_core_mochiglobal:put(nkdist_idx2pos, Idxs2Pos).
 
 
-%% @doc Converts a (long) Idx to a short pos
-idx2pos() ->
-	'mochiglobal:nkdist_idx2pos':term().
 
 
-
-idx2pos(Idx) ->
-	{Pos, Idx} = lists:keyfind(Idx, 2, idx2pos()),
-	Pos.
-	
-pos2idx(Num) ->	
-	{Num, Idx} = lists:keyfind(Num, 1, idx2pos()),
-	Idx.
-	
 
 
 
