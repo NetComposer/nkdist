@@ -24,7 +24,9 @@
 
 -behaviour(riak_core_vnode).
 
+-export([register/6, unregister/4, find/3]).
 -export([get_info/1, find_proc/3, start_proc/4, register/3, get_registered/2]).
+-export_type([ets_data/0]).
 
 -export([start_vnode/1,
          init/1,
@@ -46,9 +48,49 @@
 -include("nkdist.hrl").
 -include_lib("riak_core/include/riak_core_vnode.hrl").
 
+-define(VMASTER, nkdist_vnode_master).
+
+-type vnode() :: {nkdist:vnode_id(), node()}.
+
+-define(ERL_LOW, -1.0e99).
+-define(ERL_HIGH, <<255>>).
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% External %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%% @private
+-spec register(vnode(), nkdist:reg_type(), nkdist:obj_class(), 
+		  	   nkdist:obj_id(), nkdist:obj_meta(), pid()) ->
+	ok | {error, term()}.
+
+register({Idx, Node}, Type, Class, ObjId, Meta, Pid) ->
+	command({Idx, Node}, {reg, Type, Class, ObjId, Meta, Pid}).
+
+
+%% @private
+-spec unregister(vnode(), nkdist:obj_class(), nkdist:obj_id(), pid()) ->
+	ok | {error, term()}.
+
+unregister({Idx, Node}, Class, ObjId, Pid) ->
+	command({Idx, Node}, {unreg, Class, ObjId, Pid}).
+
+
+%% @private
+-spec find(vnode(), nkdist:obj_class(), nkdist:obj_id()) ->
+	{ok, {nkdist:reg_type(), [{nkdist:obj_meta(), pid()}]}} |
+	{error, term()}.
+
+find({Idx, Node}, Class, ObjId) ->
+	command({Idx, Node}, {find, Class, ObjId}).
+
+
+
+
+
+
+
 
 
 %% @private
@@ -121,6 +163,13 @@ start_vnode(I) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% VNode Behaviour %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-type reg() :: {nkdist:obj_meta(), pid(), Mon::reference()}.
+
+-type ets_data() ::
+	{{obj, nkdist:obj_class(), nkdist:obj_id()}, nkdist:reg_type(), [reg()]} |
+	{{mon, reference()}, nkdist:obj_class(), nkdist:obj_id()}.
+
+
 -record(state, {
 	idx :: chash:index_as_int(),				% vnode's index
 	pos :: integer(),
@@ -129,7 +178,9 @@ start_vnode(I) ->
 	masters :: #{atom() => [pid()]},			% first pid is master
 	master_pids :: #{pid() => atom()},
     handoff_target :: {chash:index_as_int(), node()},
-    forward :: node() | [{integer(), node()}]
+    forward :: node() | [{integer(), node()}],
+
+    ets :: integer()
 }).
 
 
@@ -141,14 +192,52 @@ init([Idx]) ->
 		procs = #{},
 		proc_pids = #{},
 		masters = #{},
-		master_pids = #{}
+		master_pids = #{},
+
+		ets = ets:new(store, [ordered_set, public])
 	},
-	Workers = application:get_env(?APP, vnode_workers, 1),
+	Workers = nkdist_app:get(vnode_workers),
 	FoldWorkerPool = {pool, nkdist_vnode_worker, Workers, []},
     {ok, State, [FoldWorkerPool]}.
 		
 
 %% @private
+handle_command({reg, reg, Class, ObjId, Meta, Pid}, _Send, State) ->
+	Reply = insert_single(reg, Class, ObjId, Meta, Pid, State),
+	{reply, Reply, State};
+
+handle_command({reg, mreg, Class, ObjId, Meta, Pid}, _Send, State) ->
+	Reply = insert_multi(mreg, Class, ObjId, Meta, Pid, State),
+	{reply, Reply, State};
+
+handle_command({reg, proc, Class, ObjId, Meta, Pid}, _Send, State) ->
+	Reply = insert_single(proc, Class, ObjId, Meta, Pid, State),
+	{reply, Reply, State};
+
+handle_command({reg, master, Class, ObjId, Meta, Pid}, _Send, State) ->
+	Reply = insert_multi(master, Class, ObjId, Meta, Pid, State),
+	{reply, Reply, State};
+
+handle_command({unreg, Class, ObjId, Pid}, _Send, State) ->
+	_ = do_unreg(Class, ObjId, Pid, State),
+	{reply, ok, State};
+
+handle_command({find, Class, ObjId}, _Send, State) ->
+	Reply = case do_get(Class, ObjId, State) of
+		not_found ->
+			{error, obj_not_found};
+		{Tag, List} ->
+			{ok, Tag, [{Meta, Pid} || {Meta, Pid, _Mon} <- List]}
+	end,
+	{reply, Reply, State};
+
+
+
+
+
+
+
+
 handle_command(get_info, _Sender, State) ->
 	{reply, {ok, do_get_info(State)}, State};
 
@@ -209,6 +298,20 @@ handle_coverage(get_masters, _KeySpaces, _Sender, State) ->
 
 handle_coverage(get_info, _KeySpaces, _Sender, #state{idx=Idx}=State) ->
 	{reply, {vnode, Idx, node(), {done, do_get_info(State)}}, State};
+
+
+
+
+
+
+handle_coverage({get_class, Class}, _KeySpaces, _Sender, State) ->
+	#state{idx=Idx, ets=Ets} = State,
+	Data = iter_class(Class, ?ERL_LOW, Ets, []),
+	{reply, {vnode, Idx, node(), {done, Data}}, State};
+
+handle_coverage(dump, _KeySpaces, _Sender, #state{ets=Ets, idx=Idx}=State) ->
+	{reply, {vnode, Idx, node(), {done, ets:tab2list(Ets)}}, State};
+
 
 handle_coverage(Cmd, _KeySpaces, _Sender, State) ->
 	lager:error("Module ~p unknown coverage: ~p", [?MODULE, Cmd]),
@@ -315,18 +418,24 @@ delete(#state{pos=Pos}=State) ->
 
 
 %% @private
-handle_info({'DOWN', _Ref, process, Pid, Reason}, #state{pos=Pos}=State) ->
-	case check_down_proc(Pid, Reason, State) of
-		#state{} = State1 ->
-			{ok, State1};
-		undefined ->
-			case check_down_master(Pid, Reason, State) of
+handle_info({'DOWN', Ref, process, Pid, Reason}, #state{ets=Ets, pos=Pos}=State) ->
+	case ets:lookup(Ets, {mon, Ref}) of
+		[{_, Class, ObjId}] ->
+			ok = do_unreg(Class, ObjId, Pid, State),
+			{ok, State};
+		[] ->
+			case check_down_proc(Pid, Reason, State) of
 				#state{} = State1 ->
 					{ok, State1};
 				undefined ->
-					lager:info("NkDIST vnode ~p unexpected down (~p, ~p)", 
-							   [Pos, Pid, Reason]),
-					{ok, State}
+					case check_down_master(Pid, Reason, State) of
+						#state{} = State1 ->
+							{ok, State1};
+						undefined ->
+							lager:info("NkDIST vnode ~p unexpected down (~p, ~p)", 
+									   [Pos, Pid, Reason]),
+							{ok, State}
+					end
 			end
 	end;
 
@@ -361,6 +470,111 @@ set_vnode_forwarding(Forward, State) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% @private
+insert_single(Type, Class, ObjId, Meta, Pid, #state{ets=Ets}=State) ->
+	case do_get(Class, ObjId, State) of
+		not_found ->
+			Mon = monitor(process, Pid),
+			Objs = [
+				{{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}]},
+				{{mon, Mon}, Class, ObjId}
+			],
+			true = ets:insert(Ets, Objs),
+			ok;
+		{Type, [{_OldMeta, Pid, Mon}]} ->
+			true = ets:insert(Ets, {{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}]}),
+			ok;
+		{Type, [{_Meta, Other, _Mon}]} ->
+		 	{error, {already_registered, Other}};
+		{Type2, _} ->
+			{error, {already_used, Type2}}
+	end.
+
+
+%% @private
+insert_multi(Type, Class, ObjId, Meta, Pid, State) ->
+	case do_get(Class, ObjId, State) of
+		not_found ->
+			do_insert_multi(Type, Class, ObjId, Meta, Pid, [], State),
+			ok;
+		{Type, List} ->
+			do_insert_multi(Type, Class, ObjId, Meta, Pid, List, State),
+			ok;
+		{Type2, _} ->
+			{error, {already_used, Type2}}
+	end.
+
+
+%% @private
+do_insert_multi(Type, Class, ObjId, Meta, Pid, List, #state{ets=Ets}) ->
+	case lists:keyfind(Pid, 2, List) of
+		{_OldMeta, Pid, Mon} ->
+			List2 = lists:keystore(Pid, 2, List, {Meta, Pid, Mon}),
+			ets:insert(Ets, {{obj, Class, ObjId}, Type, List2});
+		false ->
+ 			Mon = monitor(process, Pid),
+			Objs = [
+				{{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}|List]}, 
+				{{mon, Mon}, Class, ObjId}
+			],
+			ets:insert(Ets, Objs)
+	end.
+
+
+%% @private
+-spec do_get(nkdist:obj_class(), nkdist:obj_id(), #state{}) ->
+	{nkdist:reg_type(), [reg()]} | not_found.
+
+do_get(Class, ObjId, #state{ets=Ets}) ->
+	case ets:lookup(Ets, {obj, Class, ObjId}) of
+		[] ->
+			not_found;
+		[{_, Type, List}] ->
+			{Type, List}
+	end.
+
+
+%% @private
+do_unreg(Class, ObjId, Pid, #state{ets=Ets}=State) ->
+	case do_get(Class, ObjId, State) of
+		not_found ->
+			not_found;
+		{Type, List} ->
+			case lists:keytake(Pid, 2, List) of
+				{value, {_Meta, Pid, Mon}, Rest} ->
+					demonitor(Mon),
+					ets:delete(Ets, {mon, Mon}),
+					case Rest of
+						[] ->
+							ets:delete(Ets, {obj, Class, ObjId});
+						_ ->
+							ets:insert(Ets, {{obj, Class, ObjId}, Type, Rest})
+					end,
+					ok;
+				false ->
+					not_found
+			end
+	end.
+
+
+%% @private
+iter_class(Class, Key, Ets, Acc) ->
+	case ets:next(Ets, {obj, Class, Key}) of
+		{obj, Class, Key2} ->
+			iter_class(Class, Key2, Ets, [Key2|Acc]);
+		_ ->
+			Acc
+	end.
+
+
+
+
+
+
+
+
+
 
 
 %% @private

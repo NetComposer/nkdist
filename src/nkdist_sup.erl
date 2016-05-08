@@ -34,20 +34,6 @@
 
 start_link() ->
     ChildsSpec = [
-        % {nkdist_vnode_get_fsm_sup, 
-        %     {?MODULE, start_vnode_get_fsm_sup, []},
-        %     permanent,
-        %     infinity,
-        %     supervisor,
-        %     [?MODULE]}, 
-        % {nkdist_vnode_put_fsm_sup, 
-        %     {?MODULE, start_vnode_put_fsm_sup, []},
-        %     permanent,
-        %     infinity,
-        %     supervisor,
-        %     [?MODULE]}, 
-
-
         {nkdist_coverage_sup, 
             {?MODULE, start_coverage_fsm_sup, []},
             permanent,
@@ -70,34 +56,7 @@ init(ChildSpecs) ->
     {ok, ChildSpecs}.
 
 
-% %% @private
-% start_tasks_sup() ->
-%     supervisor:start_link({local, nkdist_tasks_sup}, 
-%                           ?MODULE, {{one_for_one, 10, 60}, []}).
-
-
-% start_vnode_get_fsm_sup() ->
-%     supervisor:start_link({local, nkdist_vnode_get_fsm_sup}, ?MODULE, 
-%         {{simple_one_for_one, 3, 60}, [
-%             {undefined,
-%                 {nkdist_vnode_get_fsm, start_link, []},
-%                 temporary,
-%                 5000,
-%                 worker,
-%                 [nkdist_vnode_get_fsm]
-%         }]}).
-
-% start_vnode_put_fsm_sup() ->
-%     supervisor:start_link({local, nkdist_vnode_put_fsm_sup}, ?MODULE, 
-%         {{simple_one_for_one, 3, 60}, [
-%             {undefined,
-%                 {nkdist_vnode_put_fsm, start_link, []},
-%                 temporary,
-%                 5000,
-%                 worker,
-%                 [nkdist_vnode_put_fsm]
-%         }]}).
-
+%% @private
 start_coverage_fsm_sup() ->
     supervisor:start_link({local, nkdist_coverage_sup}, ?MODULE, 
         {{simple_one_for_one, 3, 60}, [

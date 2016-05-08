@@ -22,20 +22,38 @@
 -module(nkdist).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([register/3, register/4, unregister/2, unregister/3]).
+-export([get_node/2, get_node/3, find/2, find/3, search_class/1]).
+
 -export([find_proc/2, find_proc_in_vnode/2, start_proc/3, get_procs/0, get_procs/1]).
 -export([register/1, get_registered/1, get_masters/0, get_vnode/1, get_vnode/2]).
 -export([get_info/0]).
-
--export_type([proc_id/0, vnode_id/0]).
+-export([dump/0]).
+-export_type([obj_class/0, obj_key/0, obj_meta/0, obj_idx/0]).
+-export_type([proc_id/0, vnode_id/0, reg_type/0]).
 -include("nkdist.hrl").
 
 
-%% ===================================================================
+%% ===============================-====================================
 %% Types
 %% ===================================================================
 
+-type obj_class() :: term().
+
+-type obj_key() :: term().
+
+-type obj_meta() :: term().
+
+-type obj_idx() :: <<_:160>>.
+
+-type vnode_id() :: chash:index_as_int().
+
 -type proc_id() :: term().
--type vnode_id() :: {chash:index_as_int(),  node()}.
+% -type vnode_id() :: {chash:index_as_int(),  node()}.
+
+-type reg_type() :: reg | mreg | proc | master.
+
+
 
 
 %% ===================================================================
@@ -43,12 +61,142 @@
 %% ===================================================================
 
 
+%% @doc Tries to register a process globally
+-spec register(reg_type(), obj_class(), obj_key()) ->
+    ok | {error, term()}.
+
+register(Type, Class, ObjId) ->
+    register(Type, Class, ObjId, #{}).
+
+
+%% @doc Tries to register a process globally
+-spec register(reg_type(), obj_class(), obj_key(), 
+               #{pid=>pid(), meta=>obj_meta(), obj_idx=>obj_idx()}) ->
+    ok | {error, term()}.
+
+register(Type, Class, ObjId, Opts) ->
+    Pid = case Opts of
+        #{pid:=UserPid} -> UserPid;
+        _ -> self()
+    end,
+    case get_node(Class, ObjId, Opts) of
+        {ok, Node, VNodeId} ->
+            Meta = maps:get(meta, Opts, undefined),
+            nkdist_vnode:register({Node, VNodeId}, Type, Class, ObjId, Meta, Pid);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Tries to register a process globally
+-spec unregister(obj_class(), obj_key()) ->
+    ok | {error, term()}.
+
+unregister(Class, ObjId) ->
+    unregister(Class, ObjId, #{}).
+
+
+%% @doc Tries to unregister a process globally
+-spec unregister(obj_class(), obj_key(), #{pid=>pid(), obj_idx=>obj_idx()}) ->
+    ok | {error, term()}.
+
+unregister(Class, ObjId, Opts) ->
+    Pid = case Opts of
+        #{pid:=UserPid} -> UserPid;
+        _ -> self()
+    end,
+    case get_node(Class, ObjId, Opts) of
+        {ok, Node, VNodeId} ->
+            nkdist_vnode:unregister({Node, VNodeId}, Class, ObjId, Pid);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Finds a the registered metadata and pid().
+-spec find(obj_class(), obj_key()) ->
+    {ok, reg_type(), [{obj_meta(), pid()}]} |
+    {error, term()}.
+
+find(Class, ObjId) ->
+    find(Class, ObjId, #{}).
+
+
+%% @doc Finds a the registered metadata and pid().
+-spec find(obj_class(), obj_key(), #{obj_idx=>obj_idx()}) ->
+    {ok, reg_type(), [{obj_meta(), pid()}]} |
+    {error, term()}.
+
+find(Class, ObjId, Opts) ->
+    case get_node(Class, ObjId, Opts) of
+        {ok, Node, VNodeId} ->
+            nkdist_vnode:find({Node, VNodeId}, Class, ObjId);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Gets all registered keys for a class
+-spec search_class(obj_class()) ->
+    [obj_key()].
+
+search_class(Class) ->
+    Fun = fun(Data, Acc) -> Data++Acc end,
+    nkdist_coverage:launch({get_class, Class}, 1, 10000, Fun, []).
+
+
+%% @doc Equivalent to get_vnode(Class, ObjId, #{})
+-spec get_node(obj_class(), obj_key()) ->
+    {ok, node(), vnode_id()} | {error, term()}.
+
+get_node(Class, ObjId) ->
+    get_node(Class, ObjId, #{}).
+
+
+%% @doc Finds the assigne node and vnode for any object id
+-spec get_node(obj_class(), obj_key(), #{obj_idx=>obj_idx()}) ->
+    {ok, node(), vnode_id()} | {error, term()}.
+
+get_node(Class, ObjId, Opts) ->
+    DocIdx = case Opts of
+        #{doc_idx:=UserIdx} -> 
+            UserIdx;
+        _ -> 
+            chash:key_of({Class, ObjId})
+    end,
+    % We will get the associated IDX to this process, with a node that is
+    % currently available. 
+    % If it is a secondary vnode (the node with the primary has failed), 
+    % a handoff process will move the process back to the primary
+    case riak_core_apl:get_apl(DocIdx, 1, nkdist) of
+        [{Idx, Node}] -> {ok, Idx, Node};
+        [] -> {error, vnode_not_ready}
+    end.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 %% @doc Finds a process pid
 -spec find_proc(module(), proc_id()) ->
     {ok, pid()} | {error, not_found} | {error, term()}.
 
 find_proc(CallBack, ProcId) ->
-    case nklib_proc:values({?APP, CallBack, ProcId}) of
+    case nklib_proc:values({nkdist, CallBack, ProcId}) of
         [{_, Pid}|_] ->
             {ok, Pid};
         [] ->
@@ -66,7 +214,7 @@ find_proc_in_vnode(CallBack, ProcId) ->
         {ok, VNodeId} ->
             case nkdist_vnode:find_proc(VNodeId, CallBack, ProcId) of
             	{ok, Pid} ->
-            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({nkdist, CallBack, ProcId}, VNodeId, Pid),
             		{ok, Pid};
             	{error, Error} ->
             		{error, Error}
@@ -85,10 +233,10 @@ start_proc(CallBack, ProcId, Args) ->
         {ok, VNodeId} ->
             case nkdist_vnode:start_proc(VNodeId, CallBack, ProcId, Args) of
             	{ok, Pid} ->
-            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({nkdist, CallBack, ProcId}, VNodeId, Pid),
             		{ok, Pid};
             	{error, {already_started, Pid}} ->
-            		nklib_proc:put({?APP, CallBack, ProcId}, VNodeId, Pid),
+            		nklib_proc:put({nkdist, CallBack, ProcId}, VNodeId, Pid),
                     {error, {already_started, Pid}};
                 {error, Error} ->
                     {error, Error}
@@ -164,6 +312,22 @@ get_masters() ->
 
 
 
+
+
+
+
+%% @doc Gets all stared processes in the cluster
+-spec dump() ->
+    {ok, [{{module(), proc_id()}, pid()}]}.
+
+dump() ->
+    Fun = fun(Data, Acc) -> [Data|Acc] end,
+    nkdist_coverage:launch(dump, 1, 10000, Fun, []).
+
+
+
+
+
 %% ===================================================================
 %% Private
 %% ===================================================================
@@ -193,10 +357,18 @@ get_vnode(Module, Term) ->
     % currently available. 
     % If it is a secondary vnode (the node with the primary has failed), 
     % a handoff process will move the process back to the primary
-    case riak_core_apl:get_apl(DocIdx, 1, ?APP) of
+    case riak_core_apl:get_apl(DocIdx, 1, nkdist) of
         [{Idx, Node}] -> {ok, {Idx, Node}};
         [] -> error
     end.
+
+
+
+
+
+
+
+
 
 
 %% @private

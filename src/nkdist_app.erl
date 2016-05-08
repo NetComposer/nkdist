@@ -27,9 +27,11 @@
 -export([get/1, put/2]).
 
 -include("nkdist.hrl").
-% -include_lib("nklib/include/nklib.hrl").
 
 -compile({no_auto_import, [get/1, put/2]}).
+
+-define(APP, nkdist).
+
 
 %% ===================================================================
 %% Private
@@ -64,12 +66,24 @@ start(_Type, _Args) ->
     nkdist_util:store_idx_cache(),
     lager:info("NkDIST v~s is starting", [Vsn]),
     {ok, Pid} = nkdist_sup:start_link(),
-    riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
-    %% Force the creation of vnodes before waiting for 
-    %% 'vnode_management_timer' time
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    riak_core_ring_handler:ensure_vnodes_started(Ring),
-    {ok, Pid}.
+    Syntax = #{
+        vnode_workers => integer
+    },
+    Defaults = #{
+        vnode_workers => 5
+    },
+    case nklib_config:load_env(?APP, Syntax, Defaults) of
+        {ok, _} ->
+            riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
+            %% Force the creation of vnodes before waiting for 
+            %% 'vnode_management_timer' time
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            riak_core_ring_handler:ensure_vnodes_started(Ring),
+            {ok, Pid};
+        {error, Error} ->
+            lager:error("Error parsing config: ~p", [Error]),
+            error(Error)
+    end.
 
 
 %% @private OTP standard stop callback
