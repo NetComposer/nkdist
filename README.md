@@ -10,6 +10,19 @@ Pattern|Desc
 `master`|It is intended for processes that run in every node of the cluster, so multiple registrations are allowed. It is very similar to `mreg`, but any time a process is added or removed a master is elected, and every registered process is informed. This is an _eventualy consistent_ master election, so, under network partitions, several processes can be elected as masters.
 `leader`|It is very similar to `master`, but NkDIST uses a strong consistent master election (based on [riak_ensemble]). Only the process living in the same node as the riak_ensemble's root leader will receive the `leader` message. The elected leader is always unique, under any circunstances.
 
+Once registered, the process can receive the following messages from NkDIST:
+
+Message|Types|Dest
+---|---|---
+`{nkdist, {vnode_pide, pid()}}`|all|The vnode that has registered the request sends its pid(). You can monitor it, and register again in case it fails. If the vnode is moved, a new message will be sent, and you should unregister the old one.
+`{nkdist, {master, pid()}}`|`master`|A new master (eventually consistent) has been elected
+ `{leader, pid()|none}`|`leader`|A new leader has been elected, or no leader is available. In the later case, you can register again to force a new election.
+ `{must_move, node()}`|`proc`|A registered 'proc' process must move itself to the indicated node, starting there and registering again, because its vnode halready moved. When registering, must use the `replace_pid` option to avoid a conflict.
+ `{pid_conflict, pid()}`|`reg`, `proc`|During a handoff (vnode translation), a registration failed because there was another process already registered. You Must send any update to the indicated process, and stop.
+ `{type_conflict, reg_type()}`|all|During a handoff, a registration, failed because there was another process already registered with another type. You must stop
+                                    
+                                    
+
 
 
 
