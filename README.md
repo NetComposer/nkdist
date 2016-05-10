@@ -1,6 +1,22 @@
 # Introduction
 
-NkDIST is an library to register and manage Erlang processes evenly distributed in a [_riak_core_](https://github.com/basho/riak_core) cluster. When you add or remove nodes from the cluster, NkDIST-based processes automatically _move_ to another node to rebalance the cluster.
+NkDIST is an library to register and manage Erlang processes in a [_riak_core_](https://github.com/basho/riak_core) cluster. Any Erlang process can register itself with NkDIST under a specifc `Class` and `ObjId`, calling [`nkdist:register/3,4`](src/nkdist.erl) selecting one of the following patterns:
+
+Pattern|Desc
+---|---
+`reg`|A specific vnode living at a specific node in the cluster is selected, using consistent hashing over the `Class` and `ObjId`. The process is registered there, with an optional metadata. The process fails if another process has registered the same `Class` and `ObjId`. Any process in any node of the cluster can find the process' pid() and metadata calling `nkdist:get/2,3`. When the process stops, or calls `nkdist:unregister/2,3`, it is unregistered at the vnode.
+`mreg`|Works in a very similar way, but multiple registrations for the same `Class` and `ObjId` are allowed.
+`proc`|Works in a similar way to `reg`, but it is intended for processes that must be evenly distributed in the cluster. If the process is not registered in the same node than the vnode where it is registered, a `must_move` message is sent to the process, and it must move to the selected node. You can call `nkdist:get_vnode/2,3` to know the final node in advance. When new nodes are added or removed to the cluster, vnodes can move around, and new messages `must_move` are sent to this kind of processes to move along them.
+`master`|It is intended for processes that run in every node of the cluster, so multiple registrations are allowed. It is very similar to `mreg`, but any time a process is added or removed a master is elected, and every registered process is informed. This is an _eventualy consistent_ master election, so, under network partitions, several processes can be elected as masters.
+`leader`|It is very similar to `master`, but NkDIST uses a strong consistent master election (based on [riak_ensemble]). Only the process living in the same node as the riak_ensemble's root leader will receive the `leader` message.
+
+
+
+
+
+
+
+When you add or remove nodes from the cluster, NkDIST-based processes automatically _move_ to another node to rebalance the cluster.
 
 Before starting processes, you must supply one or several callback modules, using the [nkdist_proc](src/nkdist_proc.erl) behaviour. You must implement the following callbacks:
 
