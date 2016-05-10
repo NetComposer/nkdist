@@ -53,12 +53,12 @@ shell:
 
 dev1:
 	mkdir -p data/1/ring
-	$(REBAR) shell --config config/dev1.config --name dev1@192.168.0.9 --setcookie nk
+	$(REBAR) shell --config config/dev1.config --name dev1@127.0.0.1 --setcookie nk
 
 
 dev2:
 	mkdir -p data/2/ring
-	$(REBAR) shell --config config/dev2.config --name dev2@192.168.0.9 --setcookie nk
+	$(REBAR) shell --config config/dev2.config --name dev2@127.0.0.1 --setcookie nk
 
 
 dev3:

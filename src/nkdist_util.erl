@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([ensure_dir/0, store_idx_cache/0, idx2pos/0, idx2pos/1, pos2idx/1]).
+-export([dump/0]).
 
 
 %% ===================================================================
@@ -63,6 +64,12 @@ store_idx_cache() ->
 		[Idx || {Idx, _N} <- OwnersData]
 	),
 	riak_core_mochiglobal:put(nkdist_idx2pos, Idxs2Pos).
+
+
+%% @private
+dump() ->
+    Fun = fun(Data, Acc) -> [Data|Acc] end,
+    nkdist_coverage:launch(dump, 1, 10000, Fun, []).
 
 
 

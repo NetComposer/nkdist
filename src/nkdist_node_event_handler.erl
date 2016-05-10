@@ -33,7 +33,7 @@ init([]) ->
 
 
 handle_event({service_update, _Services}, State) ->
-	lager:warning("SERVICE UPDATE: ~p", [_Services]),
+	% lager:info("SERVICE UPDATE: ~p", [_Services]),
     {ok, State}.
 
 

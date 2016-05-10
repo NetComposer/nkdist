@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Ensemble Admin Module
+%% @doc Riak Ensemble Admin Module
 -module(nkdist_admin_ensemble).
 -export([ensemble_overview/0, ensemble_detail/1]).
 

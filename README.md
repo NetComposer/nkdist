@@ -1,6 +1,6 @@
 # Introduction
 
-NkDIST is an library to manage Erlang processes evenly distributed in a [_riak_core_](https://github.com/basho/riak_core) cluster. When you add or remove nodes from the cluster, NkDIST-based processes automatically _move_ to another node to rebalance the cluster.
+NkDIST is an library to register and manage Erlang processes evenly distributed in a [_riak_core_](https://github.com/basho/riak_core) cluster. When you add or remove nodes from the cluster, NkDIST-based processes automatically _move_ to another node to rebalance the cluster.
 
 Before starting processes, you must supply one or several callback modules, using the [nkdist_proc](src/nkdist_proc.erl) behaviour. You must implement the following callbacks:
 

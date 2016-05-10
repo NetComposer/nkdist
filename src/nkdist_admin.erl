@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Cluster Admin Module
+%% @doc Riak Core Admin Module
 -module(nkdist_admin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
@@ -36,9 +36,6 @@
 -export([handoff_summary/0, handoff_enable/2, handoff_disable/2]).
 -export([handoff_details/0, handoff_details/1, handoff_config/0, handoff_config/1]).
 -export([stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
-% -export([ensemble_overview/0, ensemble_detail/1]).
-
-% -include("../deps/riak_ensemble/include/riak_ensemble_types.hrl").
 
 -type node_id() :: atom() | string() | binary().
 
@@ -122,7 +119,7 @@ quick_leave() ->
     ok | {error, term()}.
 
 quick_remove(Node) ->
-    riak_core:remove(nklib_util:to_list(Node)).
+    riak_core:remove(nklib_util:to_atom(Node)).
 
 
 

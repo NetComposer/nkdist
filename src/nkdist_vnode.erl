@@ -24,7 +24,7 @@
 
 -behaviour(riak_core_vnode).
 
--export([reg/6, unreg/4, unreg_all/3, find/3]).
+-export([reg/5, unreg/4, unreg_all/3, get/3]).
 -export_type([ets_data/0]).
 
 -export([start_vnode/1,
@@ -61,18 +61,20 @@
 
 %% @private
 -spec reg(vnode(), nkdist:reg_type(), nkdist:obj_class(), 
-		  	   nkdist:obj_id(), nkdist:obj_meta(), pid()) ->
+		  nkdist:obj_id(), nkdist:reg_opts()) ->
 	ok | {error, term()}.
 
-reg({Idx, Node}, Type, Class, ObjId, Meta, Pid) ->
-	command({Idx, Node}, {reg, Type, Class, ObjId, Meta, Pid}).
+reg({Idx, Node}, Type, Class, ObjId, Opts) ->
+	Opts2 = maps:merge(#{pid=>self()}, Opts),
+	command({Idx, Node}, {reg, Type, Class, ObjId, Opts2}).
 
 
 %% @private
--spec unreg(vnode(), nkdist:obj_class(), nkdist:obj_id(), pid()) ->
+-spec unreg(vnode(), nkdist:obj_class(), nkdist:obj_id(), nkdist:unreg_opts()) ->
 	ok | {error, term()}.
 
-unreg({Idx, Node}, Class, ObjId, Pid) ->
+unreg({Idx, Node}, Class, ObjId, Opts) ->
+	Pid = maps:get(pid, Opts, self()),
 	command({Idx, Node}, {unreg, Class, ObjId, Pid}).
 
 
@@ -85,12 +87,12 @@ unreg_all({Idx, Node}, Class, ObjId) ->
 
 
 %% @private
--spec find(vnode(), nkdist:obj_class(), nkdist:obj_id()) ->
-	{ok, {nkdist:reg_type(), [{nkdist:obj_meta(), pid()}]}} |
+-spec get(vnode(), nkdist:obj_class(), nkdist:obj_id()) ->
+	{ok, nkdist:reg_type(), [{nkdist:obj_meta(), pid()}]} |
 	{error, term()}.
 
-find({Idx, Node}, Class, ObjId) ->
-	command({Idx, Node}, {find, Class, ObjId}).
+get({Idx, Node}, Class, ObjId) ->
+	command({Idx, Node}, {get, Class, ObjId}).
 
 
 % %% @private
@@ -107,7 +109,7 @@ find({Idx, Node}, Class, ObjId) ->
 %% Sends a synchronous request to the vnode.
 %% If it fails, it will launch an exception
 -spec command(nkdist:vnode_id(), term()) ->
-	{ok, term()} | {error, term()}.
+	term() | {error, term()}.
 
 command({Idx, Node}, Msg) ->
 	try
@@ -157,30 +159,28 @@ init([Idx]) ->
 		
 
 %% @private
-handle_command({reg, reg, Class, ObjId, Meta, Pid}, _Send, State) ->
-	Reply = insert_single(reg, Class, ObjId, Meta, Pid, State),
+handle_command({reg, reg, Class, ObjId, Opts}, _Send, State) ->
+	Reply = insert_single(reg, Class, ObjId, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, mreg, Class, ObjId, Meta, Pid}, _Send, State) ->
-	Reply = insert_multi(mreg, Class, ObjId, Meta, Pid, State),
+handle_command({reg, mreg, Class, ObjId, Opts}, _Send, State) ->
+	Reply = insert_multi(mreg, Class, ObjId, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, proc, Class, ObjId, Meta, Pid}, _Send, State) ->
-	Reply = insert_single(proc, Class, ObjId, Meta, Pid, State),
+handle_command({reg, proc, Class, ObjId, Opts}, _Send, State) ->
+	Reply = insert_single(proc, Class, ObjId, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, master, Class, ObjId, Meta, Pid}, _Send, State) ->
-	lager:warning("Master"),
-	Reply = insert_multi(master, Class, ObjId, Meta, Pid, State),
+handle_command({reg, master, Class, ObjId, Opts}, _Send, State) ->
+	Reply = insert_multi(master, Class, ObjId, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, leader, Class, ObjId, Meta, Pid}, _Send, State) ->
+handle_command({reg, leader, Class, ObjId, Opts}, _Send, State) ->
 	case nkdist:node_leader() of
 		undefined ->
 			{reply, {error, no_leader}, State};
 		_ ->
-			lager:warning("Leader"),
-			Reply = insert_multi(leader, Class, ObjId, Meta, Pid, State),
+			Reply = insert_multi(leader, Class, ObjId, Opts, State),
 			{reply, Reply, State}
 	end;
 
@@ -202,7 +202,7 @@ handle_command({unreg_all, Class, ObjId}, _Send, State) ->
 	end,
 	{reply, ok, State};
 
-handle_command({find, Class, ObjId}, _Send, State) ->
+handle_command({get, Class, ObjId}, _Send, State) ->
 	Reply = case do_get(Class, ObjId, State) of
 		not_found ->
 			{error, obj_not_found};
@@ -225,7 +225,6 @@ handle_coverage({get_objs, Class}, _KeySpaces, _Sender, State) ->
 handle_coverage(dump, _KeySpaces, _Sender, #state{ets=Ets, idx=Idx}=State) ->
 	{reply, {vnode, Idx, node(), {done, ets:tab2list(Ets)}}, State};
 
-
 handle_coverage(Cmd, _KeySpaces, _Sender, State) ->
 	lager:error("Module ~p unknown coverage: ~p", [?MODULE, Cmd]),
 	{noreply, State}.
@@ -236,7 +235,7 @@ handle_handoff_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0}, Sender, State) ->
 	#state{ets=Ets, handoff_target={_, Node}} = State,
 	{async, {handoff, Node, Ets, Fun, Acc0}, Sender, State};
 
-handle_handoff_command({find, Class, ObjId}, _Send, State) ->
+handle_handoff_command({get, Class, ObjId}, _Send, State) ->
 	case do_get(Class, ObjId, State) of
 		not_found ->
 			{forward, State};
@@ -263,7 +262,7 @@ handoff_cancelled(#state{pos=Pos}=State) ->
 
 %% @private
 handoff_finished({_Idx, Node}, #state{pos=Pos}=State) ->
-	lager:notice("NkDIST handoff finished at ~p to ~p", [Pos, Node]),
+	lager:info("NkDIST handoff finished at ~p to ~p", [Pos, Node]),
     {ok, State#state{handoff_target=undefined}}.
 
 
@@ -274,26 +273,28 @@ handle_handoff_data(BinObj, #state{pos=Pos}=State) ->
 	try
 		case binary_to_term(BinObj) of
 			{{Class, ObjId}, {Type, [{Meta, Pid}]}} when Type==reg; Type==proc ->
-				lager:notice("Node ~p receiving single ~p: ~p", 
+				lager:info("Node ~p receiving single ~p: ~p", 
 							 [Pos, Type, {Class, ObjId}]),
-				case insert_single(Type, Class, ObjId, Meta, Pid, State) of
+				Opts = #{pid=>Pid, meta=>Meta},
+				case insert_single(Type, Class, ObjId, Opts, State) of
 					ok ->
 						ok;
-					{error, {already_registered, Pid2}} ->
+					{error, {pid_conflict, Pid2}} ->
 						send_msg(Pid, {pid_conflict, Pid2});
-					{error, {already_used, Type2}} ->
+					{error, {type_conflict, Type2}} ->
 						send_msg(Pid, {type_conflict, Type2})
 				end,
 				{reply, ok, State};
 			{{Class, ObjId}, {Type, List}}	when Type==mreg; Type==master; Type==leader ->
-				lager:notice("Node ~p receiving multi ~p: ~p", 
+				lager:info("Node ~p receiving multi ~p: ~p", 
 							 [Pos, Type, {Class, ObjId}]),
 				lists:foreach(
 					fun({Meta,Pid}) ->
-						case insert_multi(Type, Class, ObjId, Meta, Pid, State) of
+						Opts = #{pid=>Pid, meta=>Meta},
+						case insert_multi(Type, Class, ObjId, Opts, State) of
 							ok ->
 								ok;
-							{error, {already_used, Type2}} ->
+							{error, {type_conflict, Type2}} ->
 								send_msg(Pid, {type_conflict, Type2})
 						end
 					end,
@@ -367,7 +368,9 @@ set_vnode_forwarding(Forward, State) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% @private
-insert_single(Type, Class, ObjId, Meta, Pid, #state{ets=Ets}=State) ->
+insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
+	Pid = maps:get(pid, Opts),
+	Meta = maps:get(meta, Opts, undefined),
 	case do_get(Class, ObjId, State) of
 		not_found ->
 			Mon = monitor(process, Pid),
@@ -387,14 +390,22 @@ insert_single(Type, Class, ObjId, Meta, Pid, #state{ets=Ets}=State) ->
 			true = ets:insert(Ets, {{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}]}),
 			ok;
 		{Type, [{_Meta, Other, _Mon}]} ->
-		 	{error, {already_registered, Other}};
+			case Opts of
+				#{replace_pid:=Other} ->
+					ok = do_unreg(Class, ObjId, Other, State),
+					insert_single(Type, Class, ObjId, Opts, State);
+				_ ->
+				 	{error, {pid_conflict, Other}}
+			end;
 		{Type2, _} ->
-			{error, {already_used, Type2}}
+			{error, {type_conflict, Type2}}
 	end.
 
 
 %% @private
-insert_multi(Type, Class, ObjId, Meta, Pid, State) ->
+insert_multi(Type, Class, ObjId, Opts, State) ->
+	Pid = maps:get(pid, Opts),
+	Meta = maps:get(meta, Opts, undefined),
 	case do_get(Class, ObjId, State) of
 		not_found ->
 			do_insert_multi(Type, Class, ObjId, Meta, Pid, [], State),
@@ -403,7 +414,7 @@ insert_multi(Type, Class, ObjId, Meta, Pid, State) ->
 			do_insert_multi(Type, Class, ObjId, Meta, Pid, List, State),
 			ok;
 		{Type2, _} ->
-			{error, {already_used, Type2}}
+			{error, {type_conflict, Type2}}
 	end.
 
 

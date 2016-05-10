@@ -50,8 +50,7 @@ handle_event({ring_update, Ring}, #state{owners=Owners}=State) ->
 			{ok, State};
 		NewOwners ->
 			Diffs = owner_diffs(Owners, NewOwners, []),
-			lager:warning("New Owners: ~p", 
-				[[{nkdist_util:idx2pos(Idx), Node1, Node2}|| {Idx, Node1, Node2} <-Diffs]]),
+			lager:info("New Owners: ~p", [Diffs]),
     		{ok, State#state{owners=NewOwners}}
     end.
 
@@ -80,16 +79,22 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 
 owner_diffs([], [], Acc) ->
-	Acc;
+	lists:reverse(Acc);
 
 owner_diffs([{Idx, Node1}|Rest1], [{Idx, Node2}|Rest2], Acc) ->
 	Acc2 = case Node1==Node2 of
 		true ->
 			Acc;
 		false ->
-			[{Idx, Node1, Node2}|Acc]
+			[{nkdist_util:idx2pos(Idx), Node1, Node2}|Acc]
 	end,
 	owner_diffs(Rest1, Rest2, Acc2).
+
+
+
+
+
+
 
 
 

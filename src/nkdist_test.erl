@@ -21,33 +21,26 @@
 %% @doc Temporary testing
 -module(nkdist_test).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([s/0]).
 -export([single/0, multi/0, search/0]).
--export([start/0, start/3]).
+-export([start/0, start/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
-
-
-s() ->
-    catch sys:terminate(rebar_agent, normal),
-    nklib_reloader:start(),
-    nkdist_admin:quick_join("dev1@192.168.0.9").
 
 
 
 single() ->
     Self = self(),
     ok = nkdist:register(reg, c1, a),
-    {ok, reg, [{undefined, Self}]} = nkdist:find(c1, a),
-    {error, {already_used, reg}} = nkdist:register(mreg, c1, a),
+    {ok, reg, [{undefined, Self}]} = nkdist:get(c1, a),
+    {error, {type_conflict, reg}} = nkdist:register(mreg, c1, a),
     ok = nkdist:register(mreg, c2, a),
     ok = nkdist:unregister(c2, a),
-    {error, obj_not_found} = nkdist:find(c2, a),
+    {error, obj_not_found} = nkdist:get(c2, a),
 
     ok = nkdist:register(reg, c1, a, #{meta=>1}),
-    {ok, reg, [{1, Self}]} = nkdist:find(c1, a),
+    {ok, reg, [{1, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:find(c1, a),
+    {error, obj_not_found} = nkdist:get(c1, a),
 
     Pid1 = spawn(
         fun() ->
@@ -55,22 +48,22 @@ single() ->
             timer:sleep(200)
         end),
     timer:sleep(50),
-    {ok, reg, [{a1, Pid1}]} = nkdist:find(c1, a),
-    {error, {already_registered, Pid1}} = nkdist:register(reg, c1, a),
+    {ok, reg, [{a1, Pid1}]} = nkdist:get(c1, a),
+    {error, {pid_conflict, Pid1}} = nkdist:register(reg, c1, a),
     timer:sleep(300),
-    {error, obj_not_found} = nkdist:find(c1, a),
+    {error, obj_not_found} = nkdist:get(c1, a),
     ok.
 
 
 multi() ->
     Self = self(),
     ok = nkdist:register(mreg, c1, a),
-    {ok, mreg, [{undefined, Self}]} = nkdist:find(c1, a),
-    {error, {already_used, mreg}} = nkdist:register(reg, c1, a),
+    {ok, mreg, [{undefined, Self}]} = nkdist:get(c1, a),
+    {error, {type_conflict, mreg}} = nkdist:register(reg, c1, a),
     ok = nkdist:register(mreg, c1, a, #{meta=>1}),
-    {ok, mreg, [{1, Self}]} = nkdist:find(c1, a),
+    {ok, mreg, [{1, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:find(c1, a),
+    {error, obj_not_found} = nkdist:get(c1, a),
 
     ok = nkdist:register(mreg, c1, a),
     Pid1 = spawn(
@@ -87,15 +80,15 @@ multi() ->
             timer:sleep(200)
         end),
     timer:sleep(50),
-    {ok, mreg, List1} = nkdist:find(c1, a),
+    {ok, mreg, List1} = nkdist:get(c1, a),
     [{a2, Pid1}, {a3, Pid2}, {undefined, Self}] = lists:sort(List1),
     timer:sleep(100),
-    {ok, mreg, List2} = nkdist:find(c1, a),
+    {ok, mreg, List2} = nkdist:get(c1, a),
     [{a3, Pid2}, {undefined, Self}] = lists:sort(List2),
     timer:sleep(150),
-    {ok, mreg, [{undefined, Self}]} = nkdist:find(c1, a),
+    {ok, mreg, [{undefined, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:find(c1, a),
+    {error, obj_not_found} = nkdist:get(c1, a),
     ok.
 
 
@@ -106,35 +99,41 @@ search() ->
     nkdist:register(proc, s2, d),
     nkdist:register(reg, s3, e),
     nkdist:register(master, s3, f),
-    {ok, []} = nkdist:search_class(s0),
-    {ok, S1} = nkdist:search_class(s1),
+    {ok, []} = nkdist:get_objs(s0),
+    {ok, S1} = nkdist:get_objs(s1),
     [a, b, c] = lists:sort(S1),
-    {ok, [d]} = nkdist:search_class(s2),
-    {ok, S3} = nkdist:search_class(s3),
+    {ok, [d]} = nkdist:get_objs(s2),
+    {ok, S3} = nkdist:get_objs(s3),
     [e, f] = lists:sort(S3),
-    {ok, []} = nkdist:search_class(s4),
+    {ok, []} = nkdist:get_objs(s4),
     nkdist:unregister(s1, a),
     nkdist:unregister(s1, b),
     nkdist:unregister(s1, c),
     nkdist:unregister(s2, d),
     nkdist:unregister(s3, e),
     nkdist:unregister(s3, f),
-    {ok, []} = nkdist:search_class(s1),
-    {ok, []} = nkdist:search_class(s2),
-    {ok, []} = nkdist:search_class(s3),
+    {ok, []} = nkdist:get_objs(s1),
+    {ok, []} = nkdist:get_objs(s2),
+    {ok, []} = nkdist:get_objs(s3),
     ok.
+
+
+
+%% ===================================================================
+%% Sample Process for registration testing
+%% ===================================================================
 
 
 
 %% @private
 start() ->
-    start(reg, c, id).
-
+    start(proc, c, id, #{}).
 
 
 %% @doc
-start(Type, Class, Id) ->
-    gen_server:start(?MODULE, [Type, Class, Id], []).
+start(Type, Class, Id, Opts) ->
+    gen_server:start(?MODULE, [Type, Class, Id, Opts], []).
+
 
 
 -define(LOG(Level, Txt, Args, State),
@@ -142,14 +141,15 @@ start(Type, Class, Id) ->
 
 
 
-% ===================================================================
+%% ===================================================================
 %% gen_server behaviour
 %% ===================================================================
 
 -record(state, {
-    type :: atom(),
-    class :: term(),
-    id :: term(),
+    type :: nkdist:reg_type(),
+    class :: nkdist:obj_class(),
+    id :: nkdist:obj_id(),
+    opts :: nkdist:reg_opts(),
     vnode_pid :: pid(),
     vnode_mon :: reference(),
     master :: pid(),
@@ -159,12 +159,12 @@ start(Type, Class, Id) ->
 
 
 %% @private
-init([Type, Class, Id]) ->
+init([Type, Class, Id, Opts]) ->
     {ok, Node, Idx} = nkdist:get_vnode(Class, Id),
     Pos = nkdist_util:idx2pos(Idx),
     lager:info("Starting ~p proccess {~p, ~p} at ~p (~p, ~p)", 
                [Type, Class, Id, Node, Pos, Idx]),
-    State = #state{type=Type, class=Class, id=Id},
+    State = #state{type=Type, class=Class, id=Id, opts=Opts},
     case do_register(State) of
         ok ->
             {ok, State};
@@ -193,16 +193,21 @@ handle_info({nkdist, NkDist}, State) ->
 handle_info(stop, State) ->
     {stop, normal, State};
 
-handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{vnode_pid=Pid}=State) ->
-    ?LOG(notice, "Vnode has failed!", [], State),
+handle_info(do_register, State) ->
     case do_register(State) of
         ok ->
             ?LOG(info, "re-registered ok", [], State),
             {noreply, State};
         {error, Error} ->
-            ?LOG(info, "could not re-register: ~p", [Error], State),
+            ?LOG(info, "could not re-register: ~p, retrying", [Error], State),
+            erlang:send_after(1000, self(), do_register),
             {noreply, State}
     end;
+
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{vnode_pid=Pid}=State) ->
+    ?LOG(notice, "Vnode has failed!", [], State),
+    self() ! do_register,
+    {noreply, State};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -224,8 +229,8 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
-do_register(#state{type=Type, class=Class, id=Id}) ->
-    catch nkdist:register(Type, Class, Id).
+do_register(#state{type=Type, class=Class, id=Id, opts=Opts}) ->
+    catch nkdist:register(Type, Class, Id, Opts).
 
 
 handle_nkdist({vnode_pid, Pid}, #state{vnode_pid=OldPid, vnode_mon=Mon}=State) ->
@@ -242,6 +247,43 @@ handle_nkdist({vnode_pid, Pid}, #state{vnode_pid=OldPid, vnode_mon=Mon}=State) -
             end,
             {noreply, State#state{vnode_pid=Pid, vnode_mon=monitor(process, Pid)}}
     end;
+
+
+%% Only for 'master' registrations
+handle_nkdist({master, Pid}, State) ->
+    ?LOG(notice, "master is ~p (~p)", [Pid, node(Pid)], State),
+    {noreply, State};
+
+%% Only for 'proc' registrations
+handle_nkdist({must_move, Node}, State) ->
+    ?LOG(notice, "moving to node ~p", [Node], State),
+    #state{type=proc, class=Class, id=Id, opts=Opts} = State,
+    Opts2 = Opts#{replace_pid=>self()},
+    case rpc:call(Node, ?MODULE, start, [proc, Class, Id, Opts2]) of
+        {ok, RemPid} ->
+            ?LOG(notice, "moved to remote node, stopping: ~p", [RemPid], State);
+        Other ->
+            ?LOG(notice, "could not move, stopping: ~p", [Other], State)
+    end,
+    {stop, normal, State};
+
+%% Only for 'leader' registrations
+handle_nkdist({leader, none}, State) ->
+    ?LOG(info, "leader is NONE", [], State),
+    {noreply, State};
+
+handle_nkdist({leader, Pid}, State) ->
+    ?LOG(info, "leader is ~p (~p)", [Pid, node(Pid)], State),
+    {noreply, State};
+
+%% Only for 'reg' or 'proc' registrations
+handle_nkdist({pid_conflict, Pid}, State) ->
+    ?LOG(notice, "conflict with ~p: stopping", [Pid], State),
+    {stop, normal, State};
+
+handle_nkdist({type_conflict, Type}, State) ->
+    ?LOG(notice, "conflict with type ~p: stopping", [Type], State),
+    {stop, normal, State};
 
 handle_nkdist(NkDist, State) ->
     ?LOG(info, "nkdist msg at ~p: ~p", [self(), NkDist], State),

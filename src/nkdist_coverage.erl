@@ -30,11 +30,10 @@
 -export([init/2, process_results/2, finish/2]).
 
 
-
 %% @doc Launches a new coverage job
 -spec launch(term(), pos_integer(), pos_integer(), 
 			 fun((Data::term(), Acc::term()) -> NewAcc::term()), Acc0::term()) ->
-	{ok, MSecs::integer(), term()} | {error, term()}.
+	{ok, term()} | {error, term()}.
 
 launch(Cmd, N, Timeout, FoldFun, FoldAcc) ->
 	ReqId = erlang:phash2(make_ref()),
@@ -63,7 +62,7 @@ wait_results(ReqId, Timeout, Fun, Acc) ->
 
 -record(state, {
 	cmd :: term(),
-	from :: {raw, reference(), pid()}
+	from :: {atom(), non_neg_integer(), pid()}
 }).
 
 
