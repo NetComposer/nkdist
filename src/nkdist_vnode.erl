@@ -24,7 +24,7 @@
 
 -behaviour(riak_core_vnode).
 
--export([register/6, unregister/4, find/3]).
+-export([reg/6, unreg/4, unreg_all/3, find/3]).
 -export_type([ets_data/0]).
 
 -export([start_vnode/1,
@@ -60,20 +60,28 @@
 
 
 %% @private
--spec register(vnode(), nkdist:reg_type(), nkdist:obj_class(), 
+-spec reg(vnode(), nkdist:reg_type(), nkdist:obj_class(), 
 		  	   nkdist:obj_id(), nkdist:obj_meta(), pid()) ->
 	ok | {error, term()}.
 
-register({Idx, Node}, Type, Class, ObjId, Meta, Pid) ->
+reg({Idx, Node}, Type, Class, ObjId, Meta, Pid) ->
 	command({Idx, Node}, {reg, Type, Class, ObjId, Meta, Pid}).
 
 
 %% @private
--spec unregister(vnode(), nkdist:obj_class(), nkdist:obj_id(), pid()) ->
+-spec unreg(vnode(), nkdist:obj_class(), nkdist:obj_id(), pid()) ->
 	ok | {error, term()}.
 
-unregister({Idx, Node}, Class, ObjId, Pid) ->
+unreg({Idx, Node}, Class, ObjId, Pid) ->
 	command({Idx, Node}, {unreg, Class, ObjId, Pid}).
+
+
+%% @private
+-spec unreg_all(vnode(), nkdist:obj_class(), nkdist:obj_id()) ->
+	ok | {error, term()}.
+
+unreg_all({Idx, Node}, Class, ObjId) ->
+	command({Idx, Node}, {unreg_all, Class, ObjId}).
 
 
 %% @private
@@ -102,7 +110,12 @@ find({Idx, Node}, Class, ObjId) ->
 	{ok, term()} | {error, term()}.
 
 command({Idx, Node}, Msg) ->
-	riak_core_vnode_master:sync_command({Idx, Node}, Msg, ?VMASTER).
+	try
+		riak_core_vnode_master:sync_command({Idx, Node}, Msg, ?VMASTER)
+	catch
+		C:E ->
+			{error, {C, E}}
+	end.
 
 
 %% @private
@@ -157,6 +170,7 @@ handle_command({reg, proc, Class, ObjId, Meta, Pid}, _Send, State) ->
 	{reply, Reply, State};
 
 handle_command({reg, master, Class, ObjId, Meta, Pid}, _Send, State) ->
+	lager:warning("Master"),
 	Reply = insert_multi(master, Class, ObjId, Meta, Pid, State),
 	{reply, Reply, State};
 
@@ -165,7 +179,8 @@ handle_command({reg, leader, Class, ObjId, Meta, Pid}, _Send, State) ->
 		undefined ->
 			{reply, {error, no_leader}, State};
 		_ ->
-			Reply = insert_multi(master, Class, ObjId, Meta, Pid, State),
+			lager:warning("Leader"),
+			Reply = insert_multi(leader, Class, ObjId, Meta, Pid, State),
 			{reply, Reply, State}
 	end;
 
@@ -175,6 +190,17 @@ handle_command({unreg, Class, ObjId, Pid}, _Send, State) ->
 		not_found -> {error, not_found}
 	end,
 	{reply, Reply, State};
+
+handle_command({unreg_all, Class, ObjId}, _Send, State) ->
+	case do_get(Class, ObjId, State) of
+		not_found ->
+			ok;
+		{_Tag, List} ->
+			lists:foreach(
+				fun({_Meta, Pid, _Mon}) -> do_unreg(Class, ObjId, Pid, State) end,
+				List)
+	end,
+	{reply, ok, State};
 
 handle_command({find, Class, ObjId}, _Send, State) ->
 	Reply = case do_get(Class, ObjId, State) of
@@ -191,7 +217,7 @@ handle_command(Message, _Sender, State) ->
 
 
 %% @private
-handle_coverage({get_class, Class}, _KeySpaces, _Sender, State) ->
+handle_coverage({get_objs, Class}, _KeySpaces, _Sender, State) ->
 	#state{idx=Idx, ets=Ets} = State,
 	Data = iter_class(Class, ?ERL_LOW, Ets, []),
 	{reply, {vnode, Idx, node(), {done, Data}}, State};
@@ -259,7 +285,7 @@ handle_handoff_data(BinObj, #state{pos=Pos}=State) ->
 						send_msg(Pid, {type_conflict, Type2})
 				end,
 				{reply, ok, State};
-			{{Class, ObjId}, {Type, List}}	when Type==mreg; Type==master ->
+			{{Class, ObjId}, {Type, List}}	when Type==mreg; Type==master; Type==leader ->
 				lager:notice("Node ~p receiving multi ~p: ~p", 
 							 [Pos, Type, {Class, ObjId}]),
 				lists:foreach(

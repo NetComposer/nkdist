@@ -23,13 +23,15 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([s/0]).
 -export([single/0, multi/0, search/0]).
--export([d1/0, my_reg_loop/1]).
+-export([start/0, start/3]).
+-export([init/1, terminate/2, code_change/3, handle_call/3,
+         handle_cast/2, handle_info/2]).
 
 
 s() ->
-    sys:terminate(rebar_agent, normal),
+    catch sys:terminate(rebar_agent, normal),
     nklib_reloader:start(),
-    nkdist_admin:quick_join("dev1@127.0.0.1").
+    nkdist_admin:quick_join("dev1@192.168.0.9").
 
 
 
@@ -122,32 +124,128 @@ search() ->
     {ok, []} = nkdist:search_class(s3),
     ok.
 
-   
-d1() ->
-    spawn_link(fun() -> my_reg() end).
+
+
+%% @private
+start() ->
+    start(reg, c, id).
 
 
 
+%% @doc
+start(Type, Class, Id) ->
+    gen_server:start(?MODULE, [Type, Class, Id], []).
 
-my_reg() ->
-    ok = nkdist:register(proc, c1, p4),
-    my_reg_loop(#{}).
+
+-define(LOG(Level, Txt, Args, State),
+    lager:Level("NK Test ~p ~p "++Txt, [State#state.type, self()|Args])).
 
 
-my_reg_loop(State) ->
-    receive
-        stop ->
-            ok;
-        Any ->
-            lager:warning("RECV: ~p", [Any]),
-            nkdist_test:my_reg_loop(State)
+
+% ===================================================================
+%% gen_server behaviour
+%% ===================================================================
+
+-record(state, {
+    type :: atom(),
+    class :: term(),
+    id :: term(),
+    vnode_pid :: pid(),
+    vnode_mon :: reference(),
+    master :: pid(),
+    leader :: pid(),
+    must_move :: node()
+}).
+
+
+%% @private
+init([Type, Class, Id]) ->
+    {ok, Node, Idx} = nkdist:get_vnode(Class, Id),
+    Pos = nkdist_util:idx2pos(Idx),
+    lager:info("Starting ~p proccess {~p, ~p} at ~p (~p, ~p)", 
+               [Type, Class, Id, Node, Pos, Idx]),
+    State = #state{type=Type, class=Class, id=Id},
+    case do_register(State) of
+        ok ->
+            {ok, State};
+        {error, Error} ->
+            lager:error("Error registering ~p process: ~p", [Type, Error]),
+            {stop, normal}
     end.
 
 
+%% @private
+handle_call(Msg, _From, State) ->
+    lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
+    {noreply, State}.
 
 
+%% @private
+handle_cast(Msg, State) -> 
+    lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
+    {noreply, State}.
 
 
+%% @private
+handle_info({nkdist, NkDist}, State) ->
+    handle_nkdist(NkDist, State);
+
+handle_info(stop, State) ->
+    {stop, normal, State};
+
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{vnode_pid=Pid}=State) ->
+    ?LOG(notice, "Vnode has failed!", [], State),
+    case do_register(State) of
+        ok ->
+            ?LOG(info, "re-registered ok", [], State),
+            {noreply, State};
+        {error, Error} ->
+            ?LOG(info, "could not re-register: ~p", [Error], State),
+            {noreply, State}
+    end;
+
+handle_info(Info, State) -> 
+    lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
+    {noreply, State}.
+
+
+%% @private
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+
+%% @private
+terminate(Reason, State) ->
+    ?LOG(info, "stopped: ~p", [Reason], State).
+    
+
+
+% ===================================================================
+%% Internal
+%% ===================================================================
+
+do_register(#state{type=Type, class=Class, id=Id}) ->
+    catch nkdist:register(Type, Class, Id).
+
+
+handle_nkdist({vnode_pid, Pid}, #state{vnode_pid=OldPid, vnode_mon=Mon}=State) ->
+    case Pid of
+        OldPid ->
+            {noreply, State};
+        _ ->
+            case OldPid of
+                undefined ->
+                    ?LOG(info, "vnode is ~p", [Pid], State);
+                _ ->
+                    nklib_util:demonitor(Mon),
+                    ?LOG(notice, "vnode has changed! (~p)", [Pid], State)
+            end,
+            {noreply, State#state{vnode_pid=Pid, vnode_mon=monitor(process, Pid)}}
+    end;
+
+handle_nkdist(NkDist, State) ->
+    ?LOG(info, "nkdist msg at ~p: ~p", [self(), NkDist], State),
+    {noreply, State}.
 
 
 

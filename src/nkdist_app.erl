@@ -75,6 +75,10 @@ start(_Type, _Args) ->
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
             riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
+            ok = riak_core_ring_events:add_guarded_handler(
+                   nkdist_ring_event_handler, []),
+            ok = riak_core_node_watcher_events:add_guarded_handler(
+                   nkdist_node_event_handler, []),
             %% Force the creation of vnodes before waiting for 
             %% 'vnode_management_timer' time
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
