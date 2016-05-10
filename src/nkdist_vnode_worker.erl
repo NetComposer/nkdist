@@ -32,6 +32,11 @@
 	idx :: chash:index_as_int()
 }).
 
+
+-define(PROC_RETRY, 5).
+-define(PROC_MAX_WAIT, 4*60*60). 	% 4h
+
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -42,10 +47,9 @@ init_worker(VNodeIndex, [], _Props) ->
 
 
 %% @private
-handle_work({handoff, Masters, Procs, Fun, Acc}, Sender, State) ->
-	Acc1 = do_master_handoff(Masters, Fun, Acc),
-	Acc2 = do_proc_handoff(Procs, Fun, Acc1),
-	riak_core_vnode:reply(Sender, Acc2),
+handle_work({handoff, Node, Ets, Fun, Acc}, Sender, State) ->
+	Acc2 = handoff(ets:first(Ets), Node, Ets, Fun, Acc, []),
+ 	riak_core_vnode:reply(Sender, Acc2),
 	{noreply, State}.
 
 
@@ -54,21 +58,71 @@ handle_work({handoff, Masters, Procs, Fun, Acc}, Sender, State) ->
 %%% Internal
 %%%===================================================================
 
+handoff('$end_of_table', _Node, _Ets, _Fun, Acc, Wait) ->
+	handoff_wait(Wait, nklib_util:timestamp() + ?PROC_MAX_WAIT),
+	Acc;
+
+handoff({mon, _}=Key, Node, Ets, Fun, Acc, Wait) ->
+	handoff(ets:next(Ets, Key), Node, Ets, Fun, Acc, Wait);
+
+handoff({obj, Class, ObjId}=Key, Node, Ets, Fun, Acc, Wait) ->
+	Next = ets:next(Ets, Key),
+	case ets:lookup(Ets, Key) of
+		[{Key, proc, [{_Meta, Pid, _Mon}]}] ->
+			Wait2 = case node(Pid) of
+				Node -> 
+					Wait;
+				_ ->
+					Pid ! {nkdist, {must_move, Node}},
+					[Pid|Wait]
+			end,
+			handoff(Next, Node, Ets, Fun, Acc, Wait2);
+		[{Key, Type, List}] ->
+			List2 = [{Meta, Pid} || {Meta, Pid, _Mon} <- List],
+			Acc2 = Fun({Class, ObjId}, {Type, List2}, Acc),
+			handoff(Next, Node, Ets, Fun, Acc2, Wait);
+		[] ->
+			handoff(Next, Node, Ets, Fun, Acc, Wait)
+	end.
 
 
 %% @private
-do_master_handoff([], _Fun, Acc) ->
-	Acc;
+handoff_wait([], _Max) ->
+	ok;
 
-do_master_handoff([{Name, Pids}|Rest], Fun, Acc) ->
-	Acc1 = Fun({master, Name}, Pids, Acc),
-	do_master_handoff(Rest, Fun, Acc1).
+handoff_wait([Pid|Rest]=List, Max) ->
+	case is_process_alive(Pid) of
+		true ->
+			case nklib_util:timestamp() > Max of
+				true ->
+					lager:warning("VNode exiting while waiting for 'proc' processes"),
+					ok;
+				false ->
+					lager:info("VNode waiting for ~p 'proc' processes", 
+							   [length(List)]),
+					timer:sleep(1000*?PROC_RETRY),
+					handoff_wait(List, Max)
+			end;
+		false ->
+			handoff_wait(Rest, Max)
+	end.
 
 
-%% @private
-do_proc_handoff([], _Fun, Acc) ->
-	Acc;
 
-do_proc_handoff([{{CallBack, ProcId}, Pid}|Rest], Fun, Acc) ->
-	Acc1 = Fun({proc, CallBack, ProcId}, Pid, Acc),
-	do_proc_handoff(Rest, Fun, Acc1).	
+
+% %% @private
+% do_master_handoff([], _Fun, Acc) ->
+% 	Acc;
+
+% do_master_handoff([{Name, Pids}|Rest], Fun, Acc) ->
+% 	Acc1 = Fun({master, Name}, Pids, Acc),
+% 	do_master_handoff(Rest, Fun, Acc1).
+
+
+% %% @private
+% do_proc_handoff([], _Fun, Acc) ->
+% 	Acc;
+
+% do_proc_handoff([{{CallBack, ProcId}, Pid}|Rest], Fun, Acc) ->
+% 	Acc1 = Fun({proc, CallBack, ProcId}, Pid, Acc),
+% 	do_proc_handoff(Rest, Fun, Acc1).	

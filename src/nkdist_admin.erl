@@ -25,6 +25,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_info/0, print_info/0]).
+-export([quick_join/1, quick_leave/0, quick_remove/1]).
 -export([join/1, leave/0, leave/1, force_remove/1, replace/2, force_replace/2]).
 -export([cluster_plan/0, cluster_commit/0, cluster_clear/0, cluster_status/0]).
 -export([partitions/0, partitions/1, partition_count/0, partition_count/1]).
@@ -38,6 +39,9 @@
 % -export([ensemble_overview/0, ensemble_detail/1]).
 
 % -include("../deps/riak_ensemble/include/riak_ensemble_types.hrl").
+
+-type node_id() :: atom() | string() | binary().
+
 
 
 %% ===================================================================
@@ -88,6 +92,42 @@ print_info() ->
 
 
 %% ===================================================================
+%% 'Quick' operations
+%% ===================================================================
+
+
+%% @doc Prepares a new node for quick join
+-spec quick_join(node_id()) ->  
+    ok | {error, term()}.
+
+quick_join(Node) ->
+    try
+        riak_core:join(nklib_util:to_list(Node))
+    catch
+        Exception:Reason ->
+            {error, {Exception, Reason}}
+    end.
+
+
+%% @doc Leaves the cluster (data partitions are handed off)
+-spec quick_leave() -> 
+    ok | {error, term()}.
+
+quick_leave() ->
+    riak_core:leave().
+
+
+%% @doc 
+-spec quick_remove(node_id()) -> 
+    ok | {error, term()}.
+
+quick_remove(Node) ->
+    riak_core:remove(nklib_util:to_list(Node)).
+
+
+
+
+%% ===================================================================
 %% Cluster commands
 %%
 %% The following commands stage changes to cluster membership. These commands
@@ -134,73 +174,59 @@ print_info() ->
 %% ===================================================================
 
 %% @doc Prepares a new node for join
--spec join(string()) ->	ok | error.
-join(Node) when is_list(Node) ->
+-spec join(node_id()) ->  
+    ok | {error, term()}.
+
+join(Node) ->
     try
-        case riak_core:staged_join(Node) of
-            ok ->
-                io:format("Success: staged join request for ~p to ~p~n", 
-                		  [node(), Node]),
-                ok;
-            {error, not_reachable} ->
-                io:format("Node ~s is not reachable!~n", [Node]),
-                error;
-            {error, different_ring_sizes} ->
-                io:format("Failed: ~s has a different ring_creation_size~n",
-                          [Node]),
-                error;
-            {error, unable_to_get_join_ring} ->
-                io:format("Failed: Unable to get ring from ~s~n", [Node]),
-                error;
-            {error, not_single_node} ->
-                io:format("Failed: This node is already a member of a "
-                          "cluster~n"),
-                error;
-            {error, self_join} ->
-                io:format("Failed: This node cannot join itself in a "
-                          "cluster~n"),
-                error
-            % {error, _} ->
-            %     io:format("Join failed. Try again in a few moments.~n", []),
-            %     error
-        end
+        riak_core:staged_join(nklib_util:to_list(Node))
     catch
         Exception:Reason ->
-            lager:error("Join failed ~p:~p", [Exception, Reason]),
-            io:format("Join failed, see log for details~n"),
-            error
+            {error, {Exception, Reason}}
     end.
 
 
 %% @doc Leaves the cluster (data partitions are handed off)
--spec leave() -> ok | error.
+-spec leave() -> 
+    ok | error.
+
 leave() ->
 	riak_core_console:stage_leave([]).
 
 
 %% @doc Instructs a node to leave the cluster (data partitions are handed off)
--spec leave(string()) -> ok | error.
-leave(Node) when is_list(Node) ->
-	riak_core_console:stage_leave([Node]).
+-spec leave(node_id()) -> 
+        ok | error.
+
+leave(Node) ->
+	riak_core_console:stage_leave([nklib_util:to_list(Node)]).
 
 
 %% @doc Removes another node from the cluster without first handing off 
 %% its data partitions (for use wirh crashed or unrecoverable nodes).
--spec force_remove(string()) -> ok | error.
-force_remove(Node) when is_list(Node) ->
-	riak_core_console:stage_remove([Node]).
+-spec force_remove(string()) -> 
+    ok | error.
+
+force_remove(Node) ->
+	riak_core_console:stage_remove([nklib_util:to_list(Node)]).
 
 
 %% @doc Transfer all node partitions of Node1 to Node2
--spec replace(string(), string()) -> ok | error.
-replace(Node1, Node2) when is_list(Node1), is_list(Node2) ->
-	riak_core_console:stage_replace([Node1, Node2]).
+-spec replace(node_id(), node_id()) -> 
+    ok | error.
+
+replace(Node1, Node2) ->
+	riak_core_console:stage_replace(
+        [nklib_util:to_list(Node1), nklib_util:to_list(Node2)]).
 
 
 %% @doc Transfer all node partitions of Node1 to Node2, without handing of data
--spec force_replace(string(), string()) -> ok | error.
-force_replace(Node1, Node2) when is_list(Node1), is_list(Node2) ->
-	riak_core_console:stage_force_replace([Node1, Node2]).
+-spec force_replace(node_id(), node_id()) -> 
+    ok | error.
+
+force_replace(Node1, Node2) ->
+	riak_core_console:stage_force_replace(
+        [nklib_util:to_list(Node1), nklib_util:to_list(Node2)]).
 
 
 % %% @doc Resize ring (NOT YET SUPPORTED)
@@ -210,63 +236,87 @@ force_replace(Node1, Node2) when is_list(Node1), is_list(Node2) ->
 
 
 %% @doc Prints the current cluster plan
--spec cluster_plan() -> ok.
+-spec cluster_plan() -> 
+    ok.
+
 cluster_plan() ->
 	riak_core_console:print_staged([]).
 
 
 %% @doc Commits the current cluster plan
--spec cluster_commit() -> ok | error.
+-spec cluster_commit() -> 
+    ok | error.
+
 cluster_commit() ->
 	riak_core_console:commit_staged([]).
 
 
 %% @doc Clears the current cluster plan
--spec cluster_clear() -> ok.
+-spec cluster_clear() -> 
+    ok.
+
 cluster_clear() ->
 	riak_core_console:clear_staged([]).
 
 
 %% @doc Prints cluster status
--spec cluster_status() -> ok.
+-spec cluster_status() -> 
+    ok.
+
 cluster_status() ->
     riak_core_console:command(["riak-admin", "cluster",  "status"]).
 
 
 %% @doc Prints partition table
--spec partitions() -> ok.
+-spec partitions() -> 
+    ok.
+
 partitions() ->
     riak_core_console:command(["riak-admin", "cluster",  "partitions"]).
 
 
 %% @doc Prints partition table for a node
--spec partitions(string()) -> ok.
-partitions(Node) when is_list(Node) ->
-    riak_core_console:command(["riak-admin", "cluster",  "partitions", "-n", Node]).
+-spec partitions(node_id()) -> 
+    ok.
+
+partitions(Node) ->
+    Node2 = nklib_util:to_list(Node),
+    riak_core_console:command(["riak-admin", "cluster",  "partitions", "-n", Node2]).
 
 
 %% @doc Prints partition count
--spec partition_count() -> ok.
+-spec partition_count() -> 
+    ok.
+
 partition_count() ->
     riak_core_console:command(["riak-admin", "cluster",  "partition-count"]).
 
 
 %% @doc Prints partition count for a node
--spec partition_count(string()) -> ok.
-partition_count(Node) when is_list(Node) ->
-    riak_core_console:command(["riak-admin", "cluster",  "partition-count", "-n", Node]).
+-spec partition_count(node_id()) -> 
+    ok.
+
+partition_count(Node) ->
+    Node2 = nklib_util:to_list(Node),
+    riak_core_console:command(["riak-admin", "cluster",  "partition-count", "-n", Node2]).
 
 
 %% @doc Prints partition table for a node
--spec partition_id(string()) -> ok.
-partition_id(Id) when is_list(Id) ->
-    riak_core_console:command(["riak-admin", "cluster",  "partition", "id="++Id]).
+-spec partition_id(string()|binary()) -> 
+    ok.
+
+partition_id(Id) ->
+    Id2 = nklib_util:to_list(Id),
+    riak_core_console:command(["riak-admin", "cluster",  "partition", "id="++Id2]).
 
 
 %% @doc Prints partition table for a node
--spec partition_index(string()) -> ok.
-partition_index(Id) when is_list(Id) ->
-    riak_core_console:command(["riak-admin", "cluster",  "partition", "index="++Id]).
+-spec partition_index(string()|binary()) -> 
+    ok.
+
+partition_index(Id) ->
+    Id2 = nklib_util:to_list(Id),
+    riak_core_console:command(["riak-admin", "cluster",  "partition", "index="++Id2]).
 
 
 
@@ -275,7 +325,9 @@ partition_index(Id) when is_list(Id) ->
 %% ===================================================================
 
 %% @doc Check if all nodes in the cluster agree on the partition assignment
--spec ringready() -> ok | error.
+-spec ringready() -> 
+    ok | error.
+
 ringready() ->
     try
         case riak_core_status:ringready() of
@@ -299,62 +351,55 @@ ringready() ->
 
 %% @doc Marks a node as down so that ring transitions can be performed 
 %% before the node is brought back online.
--spec down(string()) -> ok | error.
+-spec down(node_id()) -> 
+    ok | {error, term()}.
+
 down(Node) ->
     try
-        case riak_core:down(list_to_atom(Node)) of
-            ok ->
-                io:format("Success: ~p marked as down~n", [Node]),
-                ok;
-            {error, legacy_mode} ->
-                io:format("Cluster is currently in legacy mode~n"),
-                ok;
-            {error, is_up} ->
-                io:format("Failed: ~s is up~n", [Node]),
-                error;
-            {error, not_member} ->
-                io:format("Failed: ~p is not a member of the cluster.~n",
-                          [Node]),
-                error;
-            {error, only_member} ->
-                io:format("Failed: ~p is the only member.~n", [Node]),
-                error
-        end
+        riak_core:down(nklib_util:to_atom(Node))
     catch
         Exception:Reason ->
-            lager:error("Down failed ~p:~p", [Exception, Reason]),
-            io:format("Down failed, see log for details~n"),
-            error
+            {error, {Exception, Reason}}
     end.
 
 
 %% @doc Provide a list of nodes with pending partition transfers
 %% (i.e. any secondary vnodes) and list any owned vnodes that are *not* running
--spec transfers() -> ok.
+-spec transfers() -> 
+    ok.
+
 transfers() ->
     riak_core_console:transfers([]).
 
 
 %% @doc Print handoff transfer limit
--spec transfer_limit() -> ok.
+-spec transfer_limit() -> 
+    ok.
+
 transfer_limit() ->
     riak_core_console:transfer_limit([]).
 
 %% @doc Prints member status
--spec member_status() -> ok.
+-spec member_status() -> 
+    ok.
+
 member_status() ->
     riak_core_console:member_status([]).
 
 
 %% @doc Prints ring status
--spec ring_status() -> ok.
+-spec ring_status() -> 
+    ok.
+
 ring_status() ->
     riak_core_console:ring_status([]).
 
 
 %% @doc Dumps cluster info to file(s)
 %% Format: ``<output_file> ['local' | <node> ['local' | <node>] [...]]''
--spec cluster_info([string()]) -> ok | error.
+-spec cluster_info([string()]) -> 
+    ok | error.
+
 cluster_info([OutFile|Rest]) ->
     try
         case lists:reverse(atomify_nodestrs(Rest)) of
@@ -379,25 +424,33 @@ cluster_info([OutFile|Rest]) ->
 
 
 %% @doc Lists core stats
--spec stats() -> [{atom(), term()}].
+-spec stats() -> 
+    [{atom(), term()}].
+
 stats() ->
     riak_core_stat:get_stats().
 
 
 %% @doc Lists available services
--spec services() -> [atom()].
+-spec services() -> 
+    [atom()].
+
 services() ->
     riak_core_node_watcher:services().
 
 
 %% @doc Updates system ticktime (default is 60)
--spec ticktime(integer()) -> ok.
+-spec ticktime(integer()) -> 
+    ok.
+
 ticktime(Time) when is_integer(Time), Time > 1 ->
     riak_core_net_ticktime:start_set_net_ticktime_daemon(node(), Time).
 
 
 %% @doc Get new paths and reloads all code
--spec reload_code() -> ok.
+-spec reload_code() -> 
+    ok.
+
 reload_code() ->
     case app_helper:get_env(nkdist, add_paths) of
         List when is_list(List) ->
@@ -406,6 +459,7 @@ reload_code() ->
         _ -> 
             ok
     end.
+
 
 
 %% ===================================================================
@@ -424,13 +478,17 @@ reload_code() ->
 %% ===================================================================
 
 %% @doc Get handoff summary
--spec handoff_summary() -> ok.
+-spec handoff_summary() -> 
+    ok.
+
 handoff_summary() ->
     riak_core_console:command(["riak-admin", "handoff", "summary"]). 
 
 
 %% @doc Enables handoff
--spec handoff_enable(inbound|outbound|both, string()) -> ok.
+-spec handoff_enable(inbound|outbound|both, string()) -> 
+    ok.
+
 handoff_enable(Type, Node)
         when (Type==inbound orelse Type==outbound orelse Type==both)
              andalso (Node==all orelse is_list(Node)) ->
@@ -443,7 +501,9 @@ handoff_enable(Type, Node)
 
 
 %% @doc Disables handoff
--spec handoff_disable(inbound|outbound|both, string()) -> ok.
+-spec handoff_disable(inbound|outbound|both, string()) -> 
+    ok.
+
 handoff_disable(Type, Node)
         when Type==inbound; Type==outbound; Type==both ->
     NodeStr = case Node of
@@ -455,26 +515,34 @@ handoff_disable(Type, Node)
 
 
 %% @doc Print handoff details
--spec handoff_details() -> ok.
+-spec handoff_details() -> 
+        ok.
+
 handoff_details() ->
     riak_core_console:command(["riak-admin", "handoff", "details", "-a"]). 
 
 
 %% @doc Print handoff details for an node
--spec handoff_details(string()) -> ok.
-handoff_details(Node) when is_list(Node) ->
+-spec handoff_details(string()) -> 
+    ok.
+
+handoff_details(Node) ->
     riak_core_console:command(["riak-admin", "handoff", "details", "-n", Node]). 
 
 
 %% @doc Print handoff config
--spec handoff_config() -> ok.
+-spec handoff_config() -> 
+    ok.
+
 handoff_config() ->
     riak_core_console:command(["riak-admin", "handoff", "config", "-a"]). 
 
 
 %% @doc Print handoff config for a node
--spec handoff_config(string()) -> ok.
-handoff_config(Node) when is_list(Node) ->
+-spec handoff_config(string()) -> 
+    ok.
+
+handoff_config(Node) ->
     riak_core_console:command(["riak-admin", "handoff", "config", "-n", Node]). 
 
 
@@ -546,7 +614,9 @@ handoff_config(Node) when is_list(Node) ->
 %% [riak,riak_kv,node,gets]: disabled
 %% </code>
 
--spec stat_show(string()) -> ok.
+-spec stat_show(string()) -> 
+    ok.
+
 stat_show(String) ->
     riak_core_console:stat_show([String]).
 
@@ -579,7 +649,9 @@ stat_show(String) ->
 %% [riak,riak_kv,node,gets]: type = spiral
 %%                           status = disabled
 
--spec stat_info(string()) -> any().
+-spec stat_info(string()) -> 
+    any().
+
 stat_info(String) ->
     riak_core_console:stat_info([String]).
 
@@ -604,21 +676,26 @@ stat_info(String) ->
 %% [riak,riak_kv,node,gets]: disabled
 %% [riak,riak_kv,node,puts]: disabled
 
--spec stat_enable(string()) -> ok.
+-spec stat_enable(string()) -> 
+    ok.
+
 stat_enable(String) ->
     riak_core_console:stat_enable([String]).
 
 
 %% @doc Disable statistics
--spec stat_disable(string()) -> ok.
+-spec stat_disable(string()) -> 
+    ok.
+
 stat_disable(String) ->
     riak_core_console:stat_disable([String]).
 
 
 %% @doc Rest statistics. "**" for all.
 %% Reset matching stat entries. Only enabled entries can be reset.
+-spec stat_reset(string()) -> 
+    ok.
 
--spec stat_reset(string()) -> ok.
 stat_reset(String) ->
     riak_core_console:stat_reset([String]).
 

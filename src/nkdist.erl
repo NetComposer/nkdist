@@ -24,6 +24,7 @@
 
 -export([register/3, register/4, unregister/2, unregister/3]).
 -export([get_node/2, get_node/3, find/2, find/3, search_class/1]).
+-export([enable_leader/0, node_leader/0]).
 
 -export([find_proc/2, find_proc_in_vnode/2, start_proc/3, get_procs/0, get_procs/1]).
 -export([register/1, get_registered/1, get_masters/0, get_vnode/1, get_vnode/2]).
@@ -31,10 +32,12 @@
 -export([dump/0]).
 -export_type([obj_class/0, obj_key/0, obj_meta/0, obj_idx/0]).
 -export_type([proc_id/0, vnode_id/0, reg_type/0]).
+-export_type([nkdist_info/0]).
+
 -include("nkdist.hrl").
 
 
-%% ===============================-====================================
+%% ===================================================================
 %% Types
 %% ===================================================================
 
@@ -49,9 +52,36 @@
 -type vnode_id() :: chash:index_as_int().
 
 -type proc_id() :: term().
-% -type vnode_id() :: {chash:index_as_int(),  node()}.
 
--type reg_type() :: reg | mreg | proc | master.
+-type reg_type() :: reg | mreg | proc | master | leader.
+
+-type nkdist_info() :: {nkdist, nkdist_msg()}.
+
+-type nkdist_msg() ::
+    {vnode_pid, pid()}          |   % The vnode has registered the request.
+                                    % You should monitor de pid, and register again
+                                    % in case it fails. If the vnode is moved,
+                                    % a new message will be sent, and you should
+                                    % unregister the old one
+    {master, pid()}             |   % A new master has been elected for a 'master' 
+                                    % registration
+    {leader, pid()|none}        |   % A new leader has been elected for a 'leader'
+                                    % registration, or none is available. In this case
+                                    % the process should re-register itself to forcer
+                                    % a new election try.
+    {must_move, node()}         |   % A registered 'proc' process must move itself
+                                    % and start ad register at this node, because 
+                                    % its vnode halready moved.
+    {pid_conflict, pid()}       |   % During a handoff, a reg or proc registration
+                                    % failed because there was another proces
+                                    % already registered. Must send any update to 
+                                    % the pid() and stop.
+    {type_conflict, reg_type()}.    % During a handoff, a registration
+                                    % failed because there was another process
+                                    % already registered with another type.
+                                    % Must stop
+
+
 
 
 
@@ -175,11 +205,38 @@ get_node(Class, ObjId, Opts) ->
 
 
 
+%% @doc Enables de consensus subsystem.
+%% This should only be performed in a single node in the cluster.
+%% The recommended way is letting enable the subsystem using the 
+%% 'enable_consensus' riak_core parameter, and waiting to have three nodes 
+%% in the cluster.
+%%
+%% After the subsystem is enabled, riak_core will take care of add every 
+%% new cluster member to the ensemble cluster and as a member of the 'root'
+%% ensemble, and also removing leaving nodes.
+-spec enable_leader() ->
+    ok | {error, term()}.
+
+enable_leader() ->
+    case riak_ensemble_manager:enabled() of
+        true ->
+            ok;
+        false ->
+            case riak_ensemble_manager:enable() of
+                ok -> 
+                    ok;
+                error -> 
+                    {error, could_not_enable}
+            end
+    end.
 
 
-
-
-
+%% @doc Get current node leader
+node_leader() ->
+    case riak_ensemble_manager:get_leader(root) of
+        undefined -> undefined;
+        {_, Node} -> Node
+    end.
 
 
 
