@@ -8,7 +8,7 @@ Pattern|Desc
 `mreg`|Works in a very similar way, but multiple registrations for the same `Class` and `ObjId` are allowed.
 `proc`|Works in a similar way to `reg`, but it is intended for processes that must be evenly distributed in the cluster. If the process is not registered in the same node than the vnode where it is registered, a `must_move` message is sent to the process, and it must move to the selected node. You can call `nkdist:get_vnode/2,3` to know the final node in advance. When new nodes are added or removed to the cluster, vnodes can move around, and new messages `must_move` are sent to this kind of processes to move along them.
 `master`|It is intended for processes that run in every node of the cluster, so multiple registrations are allowed. It is very similar to `mreg`, but any time a process is added or removed a master is elected, and every registered process is informed. This is an _eventualy consistent_ master election, so, under network partitions, several processes can be elected as masters.
-`leader`|It is very similar to `master`, but NkDIST uses a strong consistent master election (based on [riak_ensemble]). Only the process living in the same node as the riak_ensemble's root leader will receive the `leader` message.
+`leader`|It is very similar to `master`, but NkDIST uses a strong consistent master election (based on [riak_ensemble]). Only the process living in the same node as the riak_ensemble's root leader will receive the `leader` message. The elected leader is always unique, under any circunstances.
 
 
 
