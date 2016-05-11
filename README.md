@@ -56,7 +56,8 @@ Message|Patterns|Dest
  You can use `make dev1` to `make dev5` to start a set of nodes to test. After starting each node, make it join the cluster: `nkdist_admin:quick_join("dev1@127.0.0.1")`. There are some tests and a full example, useful for all patterns, in [nkdist_test.erl](src/nkdist_test.erl).
  
  
-### Thanks
+### Acknowledgments
+ 
  Thanks to [Basho](http://basho.com), for the excellent [Riak Core](https://github.com/basho/riak_core), and [Heinz N. Gies](https://github.com/Licenser) ([Project FIFO](https://project-fifo.net)) for the port to it to R18 and rebar3 [riak_core_ng](https://github.com/project-fifo/riak_core).
  
  
