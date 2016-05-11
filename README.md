@@ -50,10 +50,10 @@ Message|Patterns|Dest
  
  ## Testing and Samples
  
- You can use make devX (1-5) to start a set of nodes to test. After starting each node, make it join the cluster: `nkdist_admin:quick_join("dev1@127.0.0.1"). There are some tests and a full example useful for all patterns in [nkdist_test.erl](src/nkdist_test.erl).
+ You can use make devX (1-5) to start a set of nodes to test. After starting each node, make it join the cluster: `nkdist_admin:quick_join("dev1@127.0.0.1")`. There are some tests and a full example useful for all patterns in [nkdist_test.erl](src/nkdist_test.erl).
  
  
- ** IMPORTANT **
+ **IMPORTANT**
  This version of NkDIST is a complete rewrite, with a fully different API.
  
  
