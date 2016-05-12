@@ -36,6 +36,10 @@
 -define(PROC_RETRY, 5).
 -define(PROC_MAX_WAIT, 4*60*60). 	% 4h
 
+%% Dialyzer says 'Sender' is not a pid() like defined in riak_core_vnode_worker
+%% (and it is right, the callback spec is wrong)
+-dialyzer({nowarn_function, handle_work/3}).
+
 
 %% ===================================================================
 %% Public API
@@ -47,8 +51,6 @@ init_worker(VNodeIndex, [], _Props) ->
 
 
 %% @private
-%% Dialyzer says 'Sender' is not a pid() like defined in riak_core_vnode_worker
-%% (and it is right, the callback spec is wrong)
 handle_work({handoff, Node, Ets, Fun, Acc}, Sender, State) ->
 	Acc2 = handoff(ets:first(Ets), Node, Ets, Fun, Acc, []),
  	riak_core_vnode:reply(Sender, Acc2),
