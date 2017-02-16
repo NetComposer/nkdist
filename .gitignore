@@ -9,3 +9,5 @@ rebar.lock
 data
 log
 rel
+/nkdist.version
+/include/nkdist_version.hrl

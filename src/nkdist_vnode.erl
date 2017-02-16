@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -41,6 +41,8 @@
          encode_handoff_item/2,
          handle_coverage/4,
          handle_info/2,
+         handle_overload_command/3,
+         handle_overload_info/2,
          handle_exit/3,
          set_vnode_forwarding/2]).
 
@@ -348,6 +350,14 @@ handle_exit(Pid, Reason, #state{pos=Pos}=State) ->
 		_ -> lager:debug("NkDIST vnode ~p unhandled EXIT ~p, ~p", [Pos, Pid, Reason])
 	end,
 	{noreply, State}.
+
+
+%% Handling other failures
+handle_overload_command(_Req, Sender, Idx) ->
+    riak_core_vnode:reply(Sender, {fail, Idx, overload}).
+
+handle_overload_info(_, _Idx) ->
+    ok.
 
 
 %% @private

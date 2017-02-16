@@ -1,9 +1,17 @@
+APP = nkdist
 REBAR = rebar3
 
 .PHONY: rel stagedevrel package version all tree shell
 
 all: compile
 
+
+version:
+	@echo "$(shell git symbolic-ref HEAD 2> /dev/null | cut -b 12-)-$(shell git log --pretty=format:'%h, %ad' -1)" > $(APP).version
+
+
+version_header: version
+	@echo "-define(VERSION, <<\"$(shell cat $(APP).version)\">>)." > include/$(APP)_version.hrl
 
 clean:
 	$(REBAR) clean
@@ -48,7 +56,7 @@ docs:
 
 shell:
 	mkdir -p data/ring
-	$(REBAR) shell --config config/shell.config --name nkdist@127.0.0.1 --setcookie nk
+	$(REBAR) shell --config config/shell.config --name $(APP)@127.0.0.1 --setcookie nk --apps $(APP) 
 
 
 dev1:
