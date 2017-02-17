@@ -26,6 +26,13 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
+-dialyzer([
+    {nowarn_function, init/1},
+    {nowarn_function, single/0},
+    {nowarn_function, multi/0},
+    {nowarn_function, search/0}
+]).
+
 
 
 single() ->
@@ -150,7 +157,7 @@ start(Type, Class, Id, Opts) ->
     class :: nkdist:obj_class(),
     id :: nkdist:obj_id(),
     opts :: nkdist:reg_opts(),
-    vnode_pid :: pid(),
+    vnode_pid :: pid() | undefined,
     vnode_mon :: reference(),
     master :: pid(),
     leader :: pid(),

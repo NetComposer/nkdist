@@ -45,6 +45,34 @@
                   ring_ready  :: boolean()
                  }).
 
+
+-dialyzer([
+    {nowarn_function, ensemble_overview/0},
+    {nowarn_function, ensemble_overview/1},
+    {nowarn_function, ensemble_detail/1},
+    {nowarn_function, print_overview/1},
+    {nowarn_function, cluster_warning/0},
+    {nowarn_function, print_ensembles/1},
+    {nowarn_function, print_ensembles/3},
+    {nowarn_function, print_ensemble_view/6},
+    {nowarn_function, print_detail/2},
+    {nowarn_function, print_detail_view/2},
+    {nowarn_function, format_info/3},
+    {nowarn_function, get_quorums/1},
+    {nowarn_function, get_quorums/2},
+    {nowarn_function, ensemble_overview/1},
+    {nowarn_function, get_peer_info/2},
+    {nowarn_function, get_details/0},
+    {nowarn_function, lookup_ensemble/2},
+    {nowarn_function, align/2},
+    {nowarn_function, label_peers/1},
+    {nowarn_function, label_peers/5},
+    {nowarn_function, peer_names/1},
+    {nowarn_function, peer_names/2}
+  ]).
+
+
+
 %% ===================================================================
 %% Summary
 %% ===================================================================

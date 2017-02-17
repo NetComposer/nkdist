@@ -24,7 +24,7 @@
 -module(nkdist_admin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_info/0, print_info/0]).
+-export([get_info/0, print_info/0, handoffs/0]).
 -export([quick_join/1, quick_leave/0, quick_remove/1]).
 -export([join/1, leave/0, leave/1, force_remove/1, replace/2, force_replace/2]).
 -export([cluster_plan/0, cluster_commit/0, cluster_clear/0, cluster_status/0]).
@@ -86,6 +86,14 @@ print_info() ->
     handoff_details(),
     % nkdist_ensemble_admin:ensemble_overview(),
     ok.
+
+
+handoffs() ->
+    In = riak_core_handoff_manager:status({direction, inbound}),
+    Out = riak_core_handoff_manager:status({direction, inbound}),
+    {In, Out}.
+
+
 
 
 %% ===================================================================

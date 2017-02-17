@@ -28,10 +28,6 @@
 
 -include("nkdist.hrl").
 
--record(state, {
-	idx :: chash:index_as_int()
-}).
-
 
 -define(PROC_RETRY, 5).
 -define(PROC_MAX_WAIT, 4*60*60). 	% 4h
@@ -41,20 +37,56 @@
 -dialyzer({nowarn_function, handle_work/3}).
 
 
+-define(DEBUG(Txt, Args, State),
+    case State#state.debug of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type(
+            [
+                {idx_pos, State#state.pos}
+            ],
+           "NkDIST vnode worker (~p): "++Txt, [State#state.pos | Args])).
+
+
+
+-record(state, {
+	idx :: chash:index_as_int(),
+	pos :: integer(),
+	ets :: ets:tid(),
+	debug :: boolean(),
+	node :: atom(),
+	hfun,
+	timeout
+}).
+
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
 %% @private
-init_worker(VNodeIndex, [], _Props) ->
-    {ok, #state{idx=VNodeIndex}}.
+init_worker(VNodeIndex, [Ets, Pos, Debug], _Props) ->
+	State = #state{idx=VNodeIndex, pos=Pos, ets=Ets, debug=Debug},
+	?DEBUG("started (~p)", [self()], State),
+    {ok, State}.
 
 
 %% @private
-handle_work({handoff, Node, Ets, Fun, Acc}, Sender, State) ->
-	Acc2 = handoff(ets:first(Ets), Node, Ets, Fun, Acc, []),
+handle_work({handoff, Node, Fun, Acc}, Sender, #state{ets=Ets}=State) ->
+	?DEBUG("handoff starting to ~p", [Node], State),
+	State2 = State#state{
+		node = Node, 
+		hfun = Fun,
+		timeout = nklib_util:timestamp() + ?PROC_MAX_WAIT
+	},
+	Acc2 = handoff(ets:first(Ets), Acc, [], State2),
+	?DEBUG("handoff finished", [], State2),
  	riak_core_vnode:reply(Sender, Acc2),
-	{noreply, State}.
+	{noreply, State2}.
 
 
 
@@ -62,14 +94,15 @@ handle_work({handoff, Node, Ets, Fun, Acc}, Sender, State) ->
 %%% Internal
 %%%===================================================================
 
-handoff('$end_of_table', _Node, _Ets, _Fun, Acc, Wait) ->
-	handoff_wait(Wait, nklib_util:timestamp() + ?PROC_MAX_WAIT),
+handoff('$end_of_table', Acc, Wait, State) ->
+	wait_for_procs(Wait, State),
 	Acc;
 
-handoff({mon, _}=Key, Node, Ets, Fun, Acc, Wait) ->
-	handoff(ets:next(Ets, Key), Node, Ets, Fun, Acc, Wait);
+handoff({mon, _}=Key, Acc, Wait, #state{ets=Ets}=State) ->
+	handoff(ets:next(Ets, Key), Acc, Wait, State);
 
-handoff({obj, Class, ObjId}=Key, Node, Ets, Fun, Acc, Wait) ->
+handoff({obj, Class, ObjId}=Key, Acc, Wait, State) ->
+	#state{ets=Ets, node=Node, hfun=Fun} = State,
 	Next = ets:next(Ets, Key),
 	case ets:lookup(Ets, Key) of
 		[{Key, proc, [{_Meta, Pid, _Mon}]}] ->
@@ -80,53 +113,35 @@ handoff({obj, Class, ObjId}=Key, Node, Ets, Fun, Acc, Wait) ->
 					Pid ! {nkdist, {must_move, Node}},
 					[Pid|Wait]
 			end,
-			handoff(Next, Node, Ets, Fun, Acc, Wait2);
+			handoff(Next, Acc, Wait2, State);
 		[{Key, Type, List}] ->
 			List2 = [{Meta, Pid} || {Meta, Pid, _Mon} <- List],
 			Acc2 = Fun({Class, ObjId}, {Type, List2}, Acc),
-			handoff(Next, Node, Ets, Fun, Acc2, Wait);
+			handoff(Next, Acc2, Wait, State);
 		[] ->
-			handoff(Next, Node, Ets, Fun, Acc, Wait)
+			handoff(Next, Acc, Wait, State)
 	end.
 
 
 %% @private
-handoff_wait([], _Max) ->
+wait_for_procs([], _State) ->
 	ok;
 
-handoff_wait([Pid|Rest]=List, Max) ->
+wait_for_procs([Pid|Rest]=List, #state{timeout=Max}=State) ->
 	case is_process_alive(Pid) of
 		true ->
 			case nklib_util:timestamp() > Max of
 				true ->
-					lager:warning("VNode exiting while waiting for 'proc' processes"),
+					?LLOG(warning, "timeout waiting for 'proc' processed", [], State),
 					ok;
 				false ->
-					lager:info("VNode waiting for ~p 'proc' processes", 
-							   [length(List)]),
+					?LLOG(info, "waiting for ~p 'proc' processes (~p...)", 
+					      [length(List), Pid], State),
 					timer:sleep(1000*?PROC_RETRY),
-					handoff_wait(List, Max)
+					wait_for_procs(List, State)
 			end;
 		false ->
-			handoff_wait(Rest, Max)
+			wait_for_procs(Rest, State)
 	end.
 
 
-
-
-% %% @private
-% do_master_handoff([], _Fun, Acc) ->
-% 	Acc;
-
-% do_master_handoff([{Name, Pids}|Rest], Fun, Acc) ->
-% 	Acc1 = Fun({master, Name}, Pids, Acc),
-% 	do_master_handoff(Rest, Fun, Acc1).
-
-
-% %% @private
-% do_proc_handoff([], _Fun, Acc) ->
-% 	Acc;
-
-% do_proc_handoff([{{CallBack, ProcId}, Pid}|Rest], Fun, Acc) ->
-% 	Acc1 = Fun({proc, CallBack, ProcId}, Pid, Acc),
-% 	do_proc_handoff(Rest, Fun, Acc1).	

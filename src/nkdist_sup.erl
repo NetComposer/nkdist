@@ -45,13 +45,7 @@ start_link() ->
             permanent, 
             5000, 
             worker, 
-            [riak_core_vnode_master]},
-        {nkdist_agent,
-            {nkdist_agent, start_link, []},
-            permanent, 
-            5000, 
-            worker, 
-            [nkdist_agent]}
+            [riak_core_vnode_master]}
     ],
     supervisor:start_link({local, ?MODULE}, ?MODULE, {{one_for_one, 10, 60}, 
                           ChildsSpec}).

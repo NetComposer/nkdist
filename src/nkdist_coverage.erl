@@ -29,9 +29,14 @@
 -export([launch/5]).
 -export([init/2, process_results/2, finish/2]).
 
+-type from() :: {raw, integer(), pid()}.
+-type cmd() :: riak_core_coverage_fsm:request().
+-type n() :: pos_integer().
+-type time() :: pos_integer().
+
 
 %% @doc Launches a new coverage job
--spec launch(term(), pos_integer(), pos_integer(), 
+-spec launch(cmd(), n(), time(), 
 			 fun((Data::term(), Acc::term()) -> NewAcc::term()), Acc0::term()) ->
 	{ok, term()} | {error, term()}.
 
@@ -66,6 +71,10 @@ wait_results(ReqId, Timeout, Fun, Acc) ->
 }).
 
 
+
+
+
+
 %% @private
 %% - Request: Cmd,
 %% - NodeSelector: Either the atom `all' to indicate that enough VNodes 
@@ -79,6 +88,19 @@ wait_results(ReqId, Timeout, Fun, Acc) ->
 %% - Timeout - The timeout interval for the coverage request.
 %% - State - The initial state for the module
 %%
+-spec init(from(), {tuple(), n(), time()}) ->
+	{
+		tuple(),
+		all,
+		n(),
+		1,
+		atom(),
+		atom(),
+		pos_integer(),
+		riak_core_coverage_plan,
+		#state{}
+	}.
+
 init(From, {Cmd, N, Timeout}) ->
 	{
 		Cmd, 
@@ -88,6 +110,7 @@ init(From, {Cmd, N, Timeout}) ->
 		nkdist,
 		nkdist_vnode_master, 		
 		Timeout,
+		riak_core_coverage_plan,
 		#state{cmd=Cmd, from=From}
 	}.
 

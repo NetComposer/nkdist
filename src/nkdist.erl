@@ -51,7 +51,7 @@
         meta => term(),         % Associate this metadata to the registration
         pid => pid(),           % Registers this pid instead of self()
         replace_pid => pid(),   % Replaces this pid without generating conflict
-        obj_idx => obj_idx()    % Uses this idx to select the vnode
+        obj_idx => obj_idx()    % Uses this idx to select the vnode instead of auto
     }.
 
 -type unreg_opts() ::

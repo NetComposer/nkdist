@@ -57,6 +57,21 @@
 -define(ERL_HIGH, <<255>>).
 
 
+-define(DEBUG(Txt, Args, State),
+    case State#state.debug of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type(
+            [
+                {idx_pos, State#state.pos}
+            ],
+           "NkDIST vnode (~p): "++Txt, [State#state.pos | Args])).
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% External %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -138,25 +153,30 @@ start_vnode(I) ->
 	{{obj, nkdist:obj_class(), nkdist:obj_id()}, nkdist:reg_type(), [reg()]} |
 	{{mon, reference()}, nkdist:obj_class(), nkdist:obj_id()}.
 
-
 -record(state, {
 	idx :: chash:index_as_int(),				% vnode's index
 	pos :: integer(),
-    ets :: integer(),
-    handoff_target :: {chash:index_as_int(), node()},
-    forward :: node() | [{integer(), node()}]
+    ets :: ets:tid(),
+    handoff_target :: {chash:index_as_int(), node()} | undefined,
+    forward :: node() | [{integer(), node()}],
+    debug :: boolean()
 }).
 
 
 %% @private
 init([Idx]) ->
+	Pos = nkdist_util:idx2pos(Idx),
+	Debug = nkdist_app:get(debug) == true,
+	Ets = ets:new(store, [ordered_set, protected]),
     State = #state{
 		idx = Idx,
-		pos = nkdist_util:idx2pos(Idx),
-		ets = ets:new(store, [ordered_set, public])
+		pos = Pos,
+		ets = Ets,
+		debug = Debug
 	},
 	Workers = nkdist_app:get(vnode_workers),
-	FoldWorkerPool = {pool, nkdist_vnode_worker, Workers, []},
+	FoldWorkerPool = {pool, nkdist_vnode_worker, Workers, [Ets, Pos, Debug]},
+	?DEBUG("started (~p, ~p)", [State#state.idx, State#state.ets], State),
     {ok, State, [FoldWorkerPool]}.
 		
 
@@ -187,20 +207,17 @@ handle_command({reg, leader, Class, ObjId, Opts}, _Send, State) ->
 	end;
 
 handle_command({unreg, Class, ObjId, Pid}, _Send, State) ->
-	Reply = case do_unreg(Class, ObjId, Pid, State) of
-		ok -> ok;
-		not_found -> {error, not_found}
-	end,
+	Reply = do_unreg(Class, ObjId, Pid, State),
 	{reply, Reply, State};
 
 handle_command({unreg_all, Class, ObjId}, _Send, State) ->
 	case do_get(Class, ObjId, State) of
 		not_found ->
 			ok;
-		{_Tag, List} ->
+		{_Type, RegList} ->
 			lists:foreach(
 				fun({_Meta, Pid, _Mon}) -> do_unreg(Class, ObjId, Pid, State) end,
-				List)
+				RegList)
 	end,
 	{reply, ok, State};
 
@@ -208,13 +225,13 @@ handle_command({get, Class, ObjId}, _Send, State) ->
 	Reply = case do_get(Class, ObjId, State) of
 		not_found ->
 			{error, obj_not_found};
-		{Tag, List} ->
-			{ok, Tag, [{Meta, Pid} || {Meta, Pid, _Mon} <- List]}
+		{Type, RegList} ->
+			{ok, Type, [{Meta, Pid} || {Meta, Pid, _Mon} <- RegList]}
 	end,
 	{reply, Reply, State};
 
 handle_command(Message, _Sender, State) ->
-    lager:warning("NkDIST vnode: Unhandled command: ~p, ~p", [Message, _Sender]),
+    ?LLOG(warning, "unhandled command: ~p, ~p", [Message, _Sender], State),
 	{reply, {error, unhandled_command}, State}.
 
 
@@ -228,11 +245,15 @@ handle_coverage(dump, _KeySpaces, _Sender, #state{ets=Ets, idx=Idx}=State) ->
 	{reply, {vnode, Idx, node(), {done, ets:tab2list(Ets)}}, State};
 
 handle_coverage(Cmd, _KeySpaces, _Sender, State) ->
-	lager:error("Module ~p unknown coverage: ~p", [?MODULE, Cmd]),
+	?LLOG(warning, "unknown coverage: ~p", [Cmd], State),
 	{noreply, State}.
 
 
 %% @private
+%% All process registrations except proc are sent to the new vnode inmediately
+%% For proc, if it is already at remote node, nothing happens
+%% If it is not there, a {must_move, node()} message is sent and we wait for it to stop
+%% TODO: what happends if the handoff is cancelled?
 handle_handoff_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0}, Sender, State) -> 
 	#state{ets=Ets, handoff_target={_, Node}} = State,
 	{async, {handoff, Node, Ets, Fun, Acc0}, Sender, State};
@@ -241,8 +262,8 @@ handle_handoff_command({get, Class, ObjId}, _Send, State) ->
 	case do_get(Class, ObjId, State) of
 		not_found ->
 			{forward, State};
-		{Tag, List} ->
-			Reply = {ok, Tag, [{Meta, Pid} || {Meta, Pid, _Mon} <- List]},
+		{Type, RegList} ->
+			Reply = {ok, Type, [{Meta, Pid} || {Meta, Pid, _Mon} <- RegList]},
 			{reply, Reply, State}
 	end;
 
@@ -251,34 +272,33 @@ handle_handoff_command(_Cmd, _Sender, State) ->
 
 
 %% @private
-handoff_starting({Type, {Idx, Node}}, #state{pos=Pos}=State) ->
-	lager:info("NkDIST handoff (~p) starting at ~p to ~p", [Type, Pos, Node]),
+handoff_starting({Type, {Idx, Node}}, State) ->
+	?LLOG(info, "handoff (~p) starting to ~p", [Type, Node], State),
     {true, State#state{handoff_target={Idx, Node}}}.
 
 
 %% @private
-handoff_cancelled(#state{pos=Pos}=State) ->
-	lager:notice("NkDIST handoff cancelled at ~p", [Pos]),
+handoff_cancelled(State) ->
+	?LLOG(notice, "handoff cancelled", [], State),
     {ok, State#state{handoff_target=undefined}}.
 
 
 %% @private
-handoff_finished({_Idx, Node}, #state{pos=Pos}=State) ->
-	lager:info("NkDIST handoff finished at ~p to ~p", [Pos, Node]),
+handoff_finished({_Idx, Node}, State) ->
+	?LLOG(info, "handoff finished to ~p", [Node], State),
     {ok, State#state{handoff_target=undefined}}.
 
 
 %% @private
 %% If we reply {error, ...}, the handoff is cancelled, and riak_core will retry it
 %% again and again
-handle_handoff_data(BinObj, #state{pos=Pos}=State) ->
+handle_handoff_data(BinObj, State) ->
 	try
 		case binary_to_term(BinObj) of
-			{{Class, ObjId}, {Type, [{Meta, Pid}]}} when Type==reg; Type==proc ->
-				lager:info("Node ~p receiving single ~p: ~p", 
-							 [Pos, Type, {Class, ObjId}]),
+			{{Class, ObjId}, {reg, [{Meta, Pid}]}} ->
+				?DEBUG("receiving single ~p: ~p", [reg, {Class, ObjId}], State),
 				Opts = #{pid=>Pid, meta=>Meta},
-				case insert_single(Type, Class, ObjId, Opts, State) of
+				case insert_single(reg, Class, ObjId, Opts, State) of
 					ok ->
 						ok;
 					{error, {pid_conflict, Pid2}} ->
@@ -287,9 +307,8 @@ handle_handoff_data(BinObj, #state{pos=Pos}=State) ->
 						send_msg(Pid, {type_conflict, Type2})
 				end,
 				{reply, ok, State};
-			{{Class, ObjId}, {Type, List}}	when Type==mreg; Type==master; Type==leader ->
-				lager:info("Node ~p receiving multi ~p: ~p", 
-							 [Pos, Type, {Class, ObjId}]),
+			{{Class, ObjId}, {Type, List}} when Type==mreg; Type==master; Type==leader ->
+				?DEBUG("receiving multi ~p: ~p", [Type, {Class, ObjId}], State),
 				lists:foreach(
 					fun({Meta,Pid}) ->
 						Opts = #{pid=>Pid, meta=>Meta},
@@ -320,34 +339,35 @@ is_empty(#state{ets=Ets}=State) ->
 	
 
 %% @private
-delete(#state{pos=Pos}=State) ->
-	lager:info("NkDIST vnode ~p deleting", [Pos]),
+delete(State) ->
+	?LLOG(info, "deleting", [], State),
     {ok, State}.
 
 
 %% @private
-handle_info({'DOWN', Ref, process, Pid, Reason}, #state{ets=Ets, pos=Pos}=State) ->
+handle_info({'DOWN', Ref, process, Pid, Reason}, #state{ets=Ets}=State) ->
 	case ets:lookup(Ets, {mon, Ref}) of
 		[{_, Class, ObjId}] ->
 			ok = do_unreg(Class, ObjId, Pid, State),
 			{ok, State};
 		[] ->
-			lager:info("NkDIST vnode ~p unexpected down (~p, ~p)", 
-					   [Pos, Pid, Reason]),
+			?LLOG(notice, "unexpected down (~p, ~p)", [Pid, Reason], State),
 			{ok, State}
 	end;
 
 handle_info(Msg, State) ->
-	lager:warning("Module ~p unexpected info: ~p", [?MODULE, Msg]),
+	?LLOG(notice, "unexpected info: ~p", [Msg], State),
 	{ok, State}.
 
 
 %% @private
 %% Procs tipically will link to us
-handle_exit(Pid, Reason, #state{pos=Pos}=State) ->
+handle_exit(Pid, Reason, State) ->
 	case Reason of
-		normal -> ok;
-		_ -> lager:debug("NkDIST vnode ~p unhandled EXIT ~p, ~p", [Pos, Pid, Reason])
+		normal -> 
+			ok;
+		_ -> 
+			?DEBUG("unhandled EXIT ~p, ~p", [Pid, Reason], State)
 	end,
 	{noreply, State}.
 
@@ -364,8 +384,8 @@ handle_overload_info(_, _Idx) ->
 terminate(normal, _State) ->
 	ok;
 
-terminate(Reason, #state{pos=Pos}) ->
-	lager:debug("NkDIST vnode ~p terminate (~p)", [Pos, Reason]).
+terminate(Reason, State) ->
+	?DEBUG("terminate (~p)", [Reason], State).
 
 
 %% @private Called from riak core on forwarding state, after the handoff has been
@@ -390,6 +410,8 @@ insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
 			],
 			true = ets:insert(Ets, Objs),
 			send_msg(Pid, {vnode_pid, self()}),
+			?DEBUG("inserted single: ~p:~p:~p (~p)", 
+				   [Type, Class, ObjId, Pid], State),
 			case Type of
 				proc when node(Pid) /= node() ->
 					send_msg(Pid, {must_move, node()});
@@ -397,11 +419,15 @@ insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
 					ok
 			end;
 		{Type, [{_OldMeta, Pid, Mon}]} ->
+			?DEBUG("updated metadata for: ~p:~p:~p (~p)", 
+				   [Type, Class, ObjId, Pid], State),
 			true = ets:insert(Ets, {{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}]}),
 			ok;
 		{Type, [{_Meta, Other, _Mon}]} ->
 			case Opts of
 				#{replace_pid:=Other} ->
+					?DEBUG("removing replaced: ~p:~p:~p (~p)", 
+						   [Type, Class, ObjId, Pid], State),
 					ok = do_unreg(Class, ObjId, Other, State),
 					insert_single(Type, Class, ObjId, Opts, State);
 				_ ->
@@ -429,7 +455,8 @@ insert_multi(Type, Class, ObjId, Opts, State) ->
 
 
 %% @private
-do_insert_multi(Type, Class, ObjId, Meta, Pid, List, #state{ets=Ets}) ->
+do_insert_multi(Type, Class, ObjId, Meta, Pid, List, #state{ets=Ets}=State) ->
+	?DEBUG("insert multi: ~p, ~p, ~p", [Type, Class, ObjId], State),
 	List2 = case lists:keyfind(Pid, 2, List) of
 		{_OldMeta, Pid, Mon} ->
 			send_msg(Pid, {vnode_pid, self()}),
@@ -465,7 +492,7 @@ do_get(Class, ObjId, #state{ets=Ets}) ->
 do_unreg(Class, ObjId, Pid, #state{ets=Ets}=State) ->
 	case do_get(Class, ObjId, State) of
 		not_found ->
-			not_found;
+			{error, not_found};
 		{Type, List} ->
 			case lists:keytake(Pid, 2, List) of
 				{value, {_Meta, Pid, Mon}, Rest} ->
@@ -483,7 +510,7 @@ do_unreg(Class, ObjId, Pid, #state{ets=Ets}=State) ->
 					end,
 					ok;
 				false ->
-					not_found
+					{error, not_found}
 			end
 	end.
 

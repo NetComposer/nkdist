@@ -67,22 +67,13 @@ start(_Type, _Args) ->
     lager:info("NkDIST v~s is starting", [Vsn]),
     {ok, Pid} = nkdist_sup:start_link(),
     Syntax = #{
-        vnode_workers => integer
+        vnode_workers => integer,
+        debug => boolean,
+        '__defaults' => #{vnode_workers => 5}
     },
-    Defaults = #{
-        vnode_workers => 5
-    },
-    case nklib_config:load_env(?APP, Syntax, Defaults) of
+    case nklib_config:load_env(?APP, Syntax) of
         {ok, _} ->
-            riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
-            ok = riak_core_ring_events:add_guarded_handler(
-                   nkdist_ring_event_handler, []),
-            ok = riak_core_node_watcher_events:add_guarded_handler(
-                   nkdist_node_event_handler, []),
-            %% Force the creation of vnodes before waiting for 
-            %% 'vnode_management_timer' time
-            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            riak_core_ring_handler:ensure_vnodes_started(Ring),
+            wait_for_riak(),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),
@@ -110,5 +101,28 @@ put(Key, Value) ->
     nklib_config:put(?APP, Key, Value).
 
 
+%% @private
+wait_for_riak() ->
+    riak_core:register(?APP, [{vnode_module, nkdist_vnode}]),
+    ok = riak_core_ring_events:add_guarded_handler(
+           nkdist_ring_event_handler, []),
+    ok = riak_core_node_watcher_events:add_guarded_handler(
+           nkdist_node_event_handler, []),
+    wait_for_metadata(),
+    %% Force the creation of vnodes before waiting for 
+    %% 'vnode_management_timer' time
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_core_ring_handler:ensure_vnodes_started(Ring).
+
+
+%% @private
+wait_for_metadata() ->
+    case whereis(riak_core_metadata_manager) of
+        Pid when is_pid(Pid) ->
+            ok;
+        _ ->
+            timer:sleep(500),
+            wait_for_metadata()
+    end.
 
 
