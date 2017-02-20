@@ -1,7 +1,40 @@
+
+
+%%%%% NkDIST
+
+
+%% @doc The number of copies of the data that is keeped.
+%% For good consistency N > (R + W) should be true.
+{mapping, "n", "nkdist.n",
+ [{datatype, integer},
+  {default, 1}]}.
+
+
+%% @doc The number of replies requried for a read request to succeed
+%% The lower the value the faster the replies but the more likely stale
+%% data is returend.
+{mapping, "r", "nkdist.r",
+ [{datatype, integer},
+  {default, 1}]}.
+
+
+%% @doc The number of replies requried for a write request to succeed
+%% The lower the value the faster the write but the more likely to only
+%% write partial data.
+{mapping, "w", "nkdist.w",
+ [{datatype, integer},
+  {default, 1}]}.
+
+
+
+
+%%%%% Riak Core
+
 %% @doc Schema directory
 {mapping, "schema_dir", "riak_core.schema_dirs",
  [{default, "./share/schema"},
-  {datatype, string}]
+  {datatype, string},
+  {hidden, true}]
 }.
 
 {translation,
@@ -11,6 +44,61 @@
           [D]
   end
 }.
+
+
+%% @doc If not included, riak_core generates an 'undefined' directory
+{mapping, "riak_core.ring_state_dir", "riak_core.ring_state_dir",
+ [{default, "{{platform_data_dir}}/ring"},
+  {datatype, string},
+  {level, advanced}
+]}.
+
+
+%% @doc The path data gets stored into.
+{mapping, "data_dir", "riak_core.platform_data_dir",
+ [{default, "{{platform_data_dir}}"},
+  {datatype, string}]}.
+
+
+%% @doc Default ring creation size.  Make sure it is a power of 2,
+%% e.g. 16, 32, 64, 128, 256, 512 etc
+%% This is set to a default of 4 to work in a one server installation
+%% if you plan to expand your system please set it higher and reads
+%% the manual at http://bit.ly/1ciKRkS
+{mapping, "ring_size", "riak_core.ring_creation_size",
+ [{datatype, integer},
+  {default, 8},
+  {commented, 64},
+  {validators, ["ring_size"]}
+ ]}.
+
+{validator, "ring_size", "not a power of 2 greater than 1",
+ fun(Size) ->
+         Size > 1 andalso (Size band (Size-1) =:= 0)
+ end}.
+
+
+%% @doc handoff.ip is the network address that Riak binds to for
+%% intra-cluster data handoff.
+{mapping, "handoff.ip", "riak_core.handoff_ip",
+ [{default, "127.0.0.1" },
+  {datatype, string},
+  {validators, ["valid_ipaddr"]}]
+}.
+
+
+
+%%%%% Riak Ensemble
+
+
+%% @doc The path data gets stored into.
+{mapping, "platform_data_dir", "riak_ensemble.data_root",
+ [{default, "{{platform_data_dir}}"},
+  {datatype, string}]}.
+
+
+
+%%%%% Setup
 
 
 %% @doc If not included, setup generates a 'data.(node)' directory
@@ -29,9 +117,6 @@
 ]}.
 
 
-%% @doc If not included, riak_core generates an 'undefined' directory
-{mapping, "riak_core.ring_state_dir", "riak_core.ring_state_dir",
- [{default, "{{platform_data_dir}}/ring"},
-  {datatype, string},
-  {level, advanced}
-]}.
+
+
+
