@@ -47,7 +47,7 @@
          set_vnode_forwarding/2]).
 
 -include("nkdist.hrl").
--include_lib("riak_core_ng/include/riak_core_vnode.hrl").
+-include_lib("riak_core/include/riak_core_vnode.hrl").
 
 -define(VMASTER, nkdist_vnode_master).
 
