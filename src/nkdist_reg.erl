@@ -23,12 +23,25 @@
 -behaviour(gen_server).
 
 
--export([find/2, find/3, reg/3, reg/4, link/3]).
+-export([find/2, find/3, reg/3, reg/4, link_to/3, link_from/4]).
 -export([start_link/0, init/1, terminate/2, code_change/3, handle_call/3,
 	handle_cast/2, handle_info/2]).
+-export_type([msg/0]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDIST REG "++Txt, Args)).
 
+
+%% ===================================================================
+%% Public functions
+%% ===================================================================
+
+-type tag() :: term().
+
+-type msg() ::
+    {new_link, tag()} |         % A new link has been received
+    {link_down, tag()} |        % A received link has fallen
+    {updated_reg_pid, pid()}.   % A new process has been registered with the same name
+                                % It will never happen for 'proc' types
 
 
 %% ===================================================================
@@ -91,11 +104,11 @@ reg(Type, Class, ObjId, Opts) ->
 	end.
 
 
-%% @doc
--spec link(nkdist:obj_class(), nkdist:obj_id(), term()) ->
+%% @doc Links this object to another object
+-spec link_to(nkdist:obj_class(), nkdist:obj_id(), tag()) ->
 	ok | {error, term()}.
 
-link(Class, DestObjId, Tag) ->
+link_to(Class, DestObjId, Tag) ->
 	case find(Class, DestObjId) of
 		{ok, _, DestPid} ->
 			Msg = {link, Tag, self(), DestObjId, DestPid},
@@ -109,6 +122,23 @@ link(Class, DestObjId, Tag) ->
 		{error, Error} ->
 			{error, Error}
 	end.
+
+
+%% @doc Receives a link at current process from another object
+-spec link_from(nkdist:obj_class(), nkdist:obj_id(), nkdist:obj_id(), tag()) ->
+    ok | {error, term()}.
+
+link_from(Class, FromObjId, DestObjId, Tag) ->
+    case find(Class, FromObjId) of
+        {ok, _, FromPid} ->
+            Msg = {link, Tag, FromPid, DestObjId, self()},
+            gen_server:cast(?MODULE, Msg);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
 
 
 %% ===================================================================
@@ -271,7 +301,7 @@ insert_reg(ObjId, Meta, Pid) ->
 		{_OldMeta, Pid} ->
 			store_reg(ObjId, Meta, Pid);
 		{_OldMeta, OldPid} ->
-			send_msg(OldPid, {new_registered_process, ObjId, OldPid}),
+			send_msg(OldPid, {updated_reg_pid, Pid}),
 			store_reg(ObjId, Meta, Pid)
 	end,
 	insert_pid({reg, ObjId}, Pid).
@@ -282,13 +312,17 @@ insert_link(Tag, OrigPid, DestObjId, DestPid) ->
 	case lookup_link(Tag, DestObjId) of
 		{OrigPid, DestPid} ->
 			ok;
-		not_found ->
+		Other ->
+            case Other of
+                not_found ->
+                    ok;
+                {_Pid1, _Pid2} ->
+                    ?LLOG(warning, "received link ~p ~p with new pids", [Tag, DestObjId])
+            end,
 			store_link(Tag, OrigPid, DestObjId, DestPid),
 			insert_pid({link, Tag, DestObjId}, OrigPid),
 			insert_pid({link, Tag, DestObjId}, DestPid),
-			send_msg(DestPid, {new_link, Tag});
-		{_Pid1, _Pid2} ->
-			?LLOG(warning, "received link ~p ~p with new pids", [Tag, DestObjId])
+			send_msg(DestPid, {new_link, Tag})
 	end.
 
 
@@ -315,9 +349,12 @@ unregister_pid(Items, Pid) ->
 
 %% @private
 unregister_pid_item(Item, Pid) ->
-	{Ref, Items} = lookup_pid(Pid),
-	store_pid(Pid, Ref, Items -- [Item]).
-
+	case lookup_pid(Pid) of
+        {Ref, Items} ->
+            store_pid(Pid, Ref, Items -- [Item]);
+        not_found ->
+            ?LLOG(warning, "pid not found when unlink: ~p, ~p", [Item, Pid])
+    end.
 
 
 %% @private
@@ -333,7 +370,7 @@ unregister_items([{link, Tag, DestObjId}|Rest], Pid) ->
 		{Pid, DestPid} ->
 			%% The orig pid has fallen, notify Dest
 			unregister_pid_item({link, Tag, DestObjId}, DestPid),
-			send_msg(DestPid, {link_fallen, Tag});
+			send_msg(DestPid, {link_down, Tag});
 		{OrigPid, Pid} ->
 			%% The dest pid has fallen
 			unregister_pid_item({link, Tag, DestObjId}, OrigPid)
