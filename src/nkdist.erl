@@ -46,6 +46,11 @@
 
 -type obj_idx() :: <<_:160>>.
 
+-type get_opts() ::
+    #{
+        obj_idx => obj_idx()
+    }.
+
 -type reg_opts() ::
     #{
         meta => term(),         % Associate this metadata to the registration
@@ -163,7 +168,7 @@ get(Class, ObjId) ->
 
 
 %% @doc Gets registration information
--spec get(obj_class(), obj_key(), #{obj_idx=>obj_idx()}) ->
+-spec get(obj_class(), obj_key(), get_opts()) ->
     {ok, reg_type(), [{obj_meta(), pid()}]} |
     {error, term()}.
 
@@ -194,7 +199,7 @@ get_vnode(Class, ObjId) ->
 
 
 %% @doc Finds the assigned node and vnode for any class and object id
--spec get_vnode(obj_class(), obj_key(), #{obj_idx=>obj_idx()}) ->
+-spec get_vnode(obj_class(), obj_key(), get_opts()) ->
     {ok, node(), vnode_id()} | {error, term()}.
 
 get_vnode(Class, ObjId, Opts) ->
