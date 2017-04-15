@@ -82,8 +82,8 @@
 	ok | {error, term()}.
 
 reg({Idx, Node}, Type, Class, ObjId, Opts) ->
-	Opts2 = maps:merge(#{pid=>self()}, Opts),
-	command({Idx, Node}, {reg, Type, Class, ObjId, Opts2}).
+    Pid = maps:get(pid, Opts, self()),
+	command({Idx, Node}, {reg, Type, Class, ObjId, Pid, Opts}).
 
 
 %% @private
@@ -181,28 +181,28 @@ init([Idx]) ->
 		
 
 %% @private
-handle_command({reg, reg, Class, ObjId, Opts}, _Send, State) ->
-	Reply = insert_single(reg, Class, ObjId, Opts, State),
+handle_command({reg, reg, Class, ObjId, Pid, Opts}, _Send, State) ->
+	Reply = insert_single(reg, Class, ObjId, Pid, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, mreg, Class, ObjId, Opts}, _Send, State) ->
-	Reply = insert_multi(mreg, Class, ObjId, Opts, State),
+handle_command({reg, mreg, Class, ObjId, Pid, Opts}, _Send, State) ->
+	Reply = insert_multi(mreg, Class, ObjId, Pid, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, proc, Class, ObjId, Opts}, _Send, State) ->
-	Reply = insert_single(proc, Class, ObjId, Opts, State),
+handle_command({reg, proc, Class, ObjId, Pid, Opts}, _Send, State) ->
+	Reply = insert_single(proc, Class, ObjId, Pid, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, master, Class, ObjId, Opts}, _Send, State) ->
-	Reply = insert_multi(master, Class, ObjId, Opts, State),
+handle_command({reg, master, Class, ObjId, Pid, Opts}, _Send, State) ->
+	Reply = insert_multi(master, Class, ObjId, Pid, Opts, State),
 	{reply, Reply, State};
 
-handle_command({reg, leader, Class, ObjId, Opts}, _Send, State) ->
+handle_command({reg, leader, Class, ObjId, Pid, Opts}, _Send, State) ->
 	case nkdist:node_leader() of
 		undefined ->
 			{reply, {error, no_leader}, State};
 		_ ->
-			Reply = insert_multi(leader, Class, ObjId, Opts, State),
+			Reply = insert_multi(leader, Class, ObjId, Pid, Opts, State),
 			{reply, Reply, State}
 	end;
 
@@ -297,8 +297,8 @@ handle_handoff_data(BinObj, State) ->
 		case binary_to_term(BinObj) of
 			{{Class, ObjId}, {reg, [{Meta, Pid}]}} ->
 				?DEBUG("receiving single ~p: ~p", [reg, {Class, ObjId}], State),
-				Opts = #{pid=>Pid, meta=>Meta},
-				case insert_single(reg, Class, ObjId, Opts, State) of
+				Opts = #{meta=>Meta},
+				case insert_single(reg, Class, ObjId, Pid, Opts, State) of
 					ok ->
 						ok;
 					{error, {pid_conflict, Pid2}} ->
@@ -311,8 +311,8 @@ handle_handoff_data(BinObj, State) ->
 				?DEBUG("receiving multi ~p: ~p", [Type, {Class, ObjId}], State),
 				lists:foreach(
 					fun({Meta,Pid}) ->
-						Opts = #{pid=>Pid, meta=>Meta},
-						case insert_multi(Type, Class, ObjId, Opts, State) of
+						Opts = #{meta=>Meta},
+						case insert_multi(Type, Class, ObjId, Pid, Opts, State) of
 							ok ->
 								ok;
 							{error, {type_conflict, Type2}} ->
@@ -398,8 +398,7 @@ set_vnode_forwarding(Forward, State) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% @private
-insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
-	Pid = maps:get(pid, Opts),
+insert_single(Type, Class, ObjId, Pid, Opts, #state{ets=Ets}=State) ->
 	Meta = maps:get(meta, Opts, undefined),
 	case do_get(Class, ObjId, State) of
 		not_found ->
@@ -423,15 +422,17 @@ insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
 				   [Type, Class, ObjId, Pid], State),
 			true = ets:insert(Ets, {{obj, Class, ObjId}, Type, [{Meta, Pid, Mon}]}),
 			ok;
-		{Type, [{_Meta, Other, _Mon}]} ->
+		{Type, [{_Meta, OldPid, _Mon}]} ->
 			case Opts of
-				#{replace_pid:=Other} ->
+				#{replace_pid:=OldPid} ->
 					?DEBUG("removing replaced: ~p:~p:~p (~p)", 
 						   [Type, Class, ObjId, Pid], State),
-					ok = do_unreg(Class, ObjId, Other, State),
-					insert_single(Type, Class, ObjId, Opts, State);
+					ok = do_unreg(Class, ObjId, OldPid, State),
+					%% TODO Send only to valid nodes
+                    nkdist_reg:update_pid(OldPid, Pid),
+					insert_single(Type, Class, ObjId, Pid, Opts, State);
 				_ ->
-				 	{error, {pid_conflict, Other}}
+				 	{error, {pid_conflict, OldPid}}
 			end;
 		{Type2, _} ->
 			{error, {type_conflict, Type2}}
@@ -439,8 +440,7 @@ insert_single(Type, Class, ObjId, Opts, #state{ets=Ets}=State) ->
 
 
 %% @private
-insert_multi(Type, Class, ObjId, Opts, State) ->
-	Pid = maps:get(pid, Opts),
+insert_multi(Type, Class, ObjId, Pid, Opts, State) ->
 	Meta = maps:get(meta, Opts, undefined),
 	case do_get(Class, ObjId, State) of
 		not_found ->
