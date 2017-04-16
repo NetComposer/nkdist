@@ -69,7 +69,10 @@ start(_Type, _Args) ->
     Syntax = #{
         vnode_workers => integer,
         debug => boolean,
-        '__defaults' => #{vnode_workers => 5}
+        '__defaults' => #{
+            debug => false,
+            vnode_workers => 5
+        }
     },
     case nklib_config:load_env(?APP, Syntax) of
         {ok, _} ->
