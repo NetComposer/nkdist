@@ -24,6 +24,7 @@
 
 -export([find/2, find/3, register/3, register/4]).
 -export([link/3, link_pid/2, link_pid/3, unlink/3, unlink_pid/2, unlink_pid/3]).
+-export([reserve/2, unreserve/2]).
 -export([update_pid/2]).
 -export([start_link/0, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -191,6 +192,24 @@ unlink_pid(OrigPid, DestPid, Tag) when is_pid(OrigPid), is_pid(DestPid) ->
     gen_server:cast(?MODULE, {unlink, OrigPid, DestPid, Tag}).
 
 
+%% @doc "Reserves" an object registration at this node
+%% Any other reservation will fail
+%% Caller process must call remove_reserve/2 (or die) to remove the reservation
+-spec reserve(nkdist:obj_class(), nkdist:obj_id()) ->
+    ok | {error, {already_reserved, pid()}|term()}.
+
+reserve(Class, ObjId) ->
+    gen_server:call(?MODULE, {reserve, Class, ObjId}).
+
+
+%% @doc Removes a reservation
+-spec unreserve(nkdist:obj_class(), nkdist:obj_id()) ->
+    ok.
+
+unreserve(Class, ObjId) ->
+    gen_server:cast(?MODULE, {unreserve, Class, ObjId}).
+
+
 %% @private Received from nkdist_vnode when a process is registered with an update pid
 update_pid(OldPid, NewPid) ->
     gen_server:abcast(?MODULE, {update_pid, OldPid, NewPid}).
@@ -202,8 +221,10 @@ update_pid(OldPid, NewPid) ->
 
 %% ETS:
 %% - {{reg, nkdist:obj_class(), nkdist:obj_id()}, Meta::term(), pid()}
+%% - {{reserve, nkdist:obj_class(), nkdist:obj_id()}, pid()}
 %% - {{pid, pid()}, Mon::reference(), [
 %%      {reg, nkdist:obj_class(), nkdist:obj_id()} |
+%%      {reserve, nkdist:obj_class(), nkdist:obj_id()} |
 %%      {link_to, pid(), Tag} | {link_from, pid(), Tag}]}
 
 
@@ -241,6 +262,10 @@ handle_call({link, OrigPid, DestPid, Tag}, _From, State) ->
     insert_item_pid({link_from, OrigPid, Tag, orig}, DestPid),
     {reply, ok, State};
 
+handle_call({reserve, Class, ObjId}, From, State) ->
+    insert_reserve(Class, ObjId, From),
+    {noreply, State};
+
 handle_call(Msg, _From, State) ->
 	lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
 	{noreply, State}.
@@ -269,6 +294,10 @@ handle_cast({unlink, OrigPid, DestPid, Tag}, State) ->
 handle_cast({unlink_dest, OrigPid, DestPid, Tag}, State) ->
     remove_item_pid({link_to, OrigPid, Tag, dest}, DestPid),
     remove_item_pid({link_from, DestPid, Tag, dest}, OrigPid),
+    {noreply, State};
+
+handle_cast({unreserve, Class, ObjId}, State) ->
+    remove_reserve(Class, ObjId),
     {noreply, State};
 
 handle_cast({update_pid, OldPid, NewPid}, State) ->
@@ -348,6 +377,29 @@ insert_reg(Class, ObjId, Meta, Pid, State) ->
 
 
 %% @private
+insert_reserve(Class, ObjId, {Pid, _Ref}=From) ->
+    case ets_lookup_reserve(Class, ObjId) of
+        not_found ->
+            ets_store_reserve(Class, ObjId, Pid),
+            insert_item_pid({reserve, Class, ObjId}, Pid),
+            gen_server:reply(From, ok);
+        Pid2 when is_pid(Pid2) ->
+            gen_server:reply(From, {error, {already_reserved, Pid2}})
+    end.
+
+
+%% @private
+remove_reserve(Class, ObjId) ->
+    case ets_lookup_reserve(Class, ObjId) of
+        not_found ->
+            ok;
+        Pid when is_pid(Pid) ->
+            remove_item_pid({reserve, Class, ObjId}, Pid),
+            ets_delete_reserve(Class, ObjId)
+    end.
+
+
+%% @private
 insert_item_pid(Item, Pid) ->
 	case ets_lookup_pid(Pid) of
 		not_found ->
@@ -383,6 +435,8 @@ remove_items_pid([Item|Rest], Pid, State) ->
     case Item of
         {reg, Class, ObjId} ->
             ets_delete_reg(Class, ObjId);
+        {reserve, Class, ObjId} ->
+            ets_delete_reserve(Class, ObjId);
         {link_to, Pid2, Tag, Type} ->
             % We do nothing
             remove_item_pid({link_from, Pid, Tag, Type}, Pid2);
@@ -406,6 +460,8 @@ update_items_pid([Item|Rest], OldPid, NewPid, State) ->
     case Item of
         {reg, Class, ObjId} ->
             ets_delete_reg(Class, ObjId);
+        {reserve, Class, ObjId} ->
+            ets_delete_reserve(Class, ObjId);
         {link_to, Pid2, Tag, Type} ->
             remove_item_pid({link_from, OldPid, Tag, Type}, Pid2),
             insert_item_pid({link_to, Pid2, Tag, Type}, NewPid),
@@ -466,6 +522,24 @@ ets_delete_pid(Pid, Ref) ->
     ets:delete(?MODULE, {pid, Pid}).
 
 
+%% @private
+ets_lookup_reserve(Class, ObjId) ->
+    case ets:lookup(?MODULE, {reserve, Class, ObjId}) of
+        [] -> not_found;
+        [{_, Pid}] -> Pid
+    end.
+
+
+%% @private
+ets_store_reserve(Class, ObjId, Pid) ->
+    ets:insert(?MODULE, {{reserve, Class, ObjId}, Pid}).
+
+
+%% @private
+ets_delete_reserve(Class, ObjId) ->
+    ets:delete(?MODULE, {reserve, Class, ObjId}).
+
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
@@ -473,7 +547,8 @@ ets_delete_pid(Pid, Ref) ->
 test() ->
     test1(),
     test2(),
-    test3().
+    test3(),
+    test4().
 
 
 test1() ->
@@ -600,6 +675,25 @@ test3() ->
     none = wait_msg(Ref1C),
     none = wait_msg(Ref2C),
     ok.
+
+test4() ->
+    Pid = spawn_link(fun() -> ok = reserve(test1, obj1), timer:sleep(100) end),
+    timer:sleep(10),
+    {error, {already_reserved, Pid}} = reserve(test1, obj1),
+    ok = reserve(test1, obj2),
+    Self = self(),
+    {error, {already_reserved, Self}} = reserve(test1, obj2),
+    ok = unreserve(test1, obj2),
+    timer:sleep(10),
+    ok = reserve(test1, obj2),
+    ok = unreserve(test1, obj2),
+    timer:sleep(110),
+    ok = reserve(test1, obj1),
+    ok = unreserve(test1, obj1).
+
+
+
+
 
 
 forward_msg(Ref, Pid) ->
