@@ -53,6 +53,7 @@
 
 -type msg() ::
     {received_link, tag()} |        % A new link has been received
+    {removed_link, tag()} |         % An existing link has been removed
     {received_link_down, tag()} |   % A received link has fallen
     {sent_link_down, tag()} |       % A link we sent has failed
     {updated_reg_pid, pid()}.       % A new process has been registered with the same name
@@ -257,9 +258,16 @@ handle_call({put, Class, ObjId, Meta, Pid}, _From, State) ->
     {reply, ok, State};
 
 handle_call({link, OrigPid, DestPid, Tag}, _From, State) ->
-    gen_server:abcast([node(DestPid)], ?MODULE, {link_dest, OrigPid, DestPid, Tag}),
-    insert_item_pid({link_to, DestPid, Tag, orig}, OrigPid),
-    insert_item_pid({link_from, OrigPid, Tag, orig}, DestPid),
+    case
+        insert_item_pid({link_to, DestPid, Tag, orig}, OrigPid) == not_stored andalso
+        insert_item_pid({link_from, OrigPid, Tag, orig}, DestPid) == not_stored
+    of
+        true ->
+            % It is a re-registration
+            ok;
+        false ->
+            gen_server:cast({?MODULE, node(DestPid)}, {link_dest, OrigPid, DestPid, Tag})
+    end,
     {reply, ok, State};
 
 handle_call({reserve, Class, ObjId}, From, State) ->
@@ -286,14 +294,21 @@ handle_cast({link_dest, OrigPid, DestPid, Tag}, State) ->
     {noreply, State};
 
 handle_cast({unlink, OrigPid, DestPid, Tag}, State) ->
-    gen_server:abcast([node(DestPid)], ?MODULE, {unlink_dest, OrigPid, DestPid, Tag}),
+    gen_server:cast({?MODULE, node(DestPid)}, {unlink_dest, OrigPid, DestPid, Tag}),
     remove_item_pid({link_to, DestPid, Tag, orig}, OrigPid),
     remove_item_pid({link_from, OrigPid, Tag, orig}, DestPid),
     {noreply, State};
 
 handle_cast({unlink_dest, OrigPid, DestPid, Tag}, State) ->
-    remove_item_pid({link_to, OrigPid, Tag, dest}, DestPid),
-    remove_item_pid({link_from, DestPid, Tag, dest}, OrigPid),
+    case
+        remove_item_pid({link_to, OrigPid, Tag, dest}, DestPid) == removed andalso
+        remove_item_pid({link_from, DestPid, Tag, dest}, OrigPid) == removed
+    of
+        true ->
+            send_msg(DestPid, {removed_link, Tag}, State);
+        false ->
+            ok
+    end,
     {noreply, State};
 
 handle_cast({unreserve, Class, ObjId}, State) ->
@@ -404,13 +419,15 @@ insert_item_pid(Item, Pid) ->
 	case ets_lookup_pid(Pid) of
 		not_found ->
 			Ref = monitor(process, Pid),
-			ets_store_pid(Pid, Ref, [Item]);
+			ets_store_pid(Pid, Ref, [Item]),
+            stored;
 		{Ref, Items} ->
 			case lists:member(Item, Items) of
 				true ->
-					ok;
+					not_stored;
 				false ->
-					ets_store_pid(Pid, Ref, [Item|Items])
+					ets_store_pid(Pid, Ref, [Item|Items]),
+                    stored
 			end
 	end.
 
@@ -419,11 +436,18 @@ insert_item_pid(Item, Pid) ->
 remove_item_pid(Item, Pid) ->
     case ets_lookup_pid(Pid) of
         {Ref, [Item]} ->
-            ets_delete_pid(Pid, Ref);
+            ets_delete_pid(Pid, Ref),
+            removed;
         {Ref, Items} ->
-            ets_store_pid(Pid, Ref, Items--[Item]);
+            case lists:member(Item, Items) of
+                true ->
+                    ets_store_pid(Pid, Ref, Items--[Item]),
+                    removed;
+                false ->
+                    not_removed
+            end;
         not_found ->
-            ok
+            not_removed
     end.
 
 
@@ -566,8 +590,8 @@ test1() ->
     not_found = ets_lookup_reg(test2, obj1),
     not_found = ets_lookup_reg(test1, obj1_c),
     timer:sleep(200),
-    {error, obj_not_found} = find(test1, obj1),
-    {error, obj_not_found} = find(test1, obj1_b),
+    {error, object_not_found} = find(test1, obj1),
+    {error, object_not_found} = find(test1, obj1_b),
     ok.
 
 

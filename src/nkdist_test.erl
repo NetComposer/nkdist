@@ -42,12 +42,12 @@ single() ->
     {error, {type_conflict, reg}} = nkdist:register(mreg, c1, a),
     ok = nkdist:register(mreg, c2, a),
     ok = nkdist:unregister(c2, a),
-    {error, obj_not_found} = nkdist:get(c2, a),
+    {error, object_not_found} = nkdist:get(c2, a),
 
     ok = nkdist:register(reg, c1, a, #{meta=>1}),
     {ok, reg, [{1, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:get(c1, a),
+    {error, object_not_found} = nkdist:get(c1, a),
 
     Pid1 = spawn(
         fun() ->
@@ -58,7 +58,7 @@ single() ->
     {ok, reg, [{a1, Pid1}]} = nkdist:get(c1, a),
     {error, {pid_conflict, Pid1}} = nkdist:register(reg, c1, a),
     timer:sleep(300),
-    {error, obj_not_found} = nkdist:get(c1, a),
+    {error, object_not_found} = nkdist:get(c1, a),
     ok.
 
 
@@ -70,7 +70,7 @@ multi() ->
     ok = nkdist:register(mreg, c1, a, #{meta=>1}),
     {ok, mreg, [{1, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:get(c1, a),
+    {error, object_not_found} = nkdist:get(c1, a),
 
     ok = nkdist:register(mreg, c1, a),
     Pid1 = spawn(
@@ -95,7 +95,7 @@ multi() ->
     timer:sleep(150),
     {ok, mreg, [{undefined, Self}]} = nkdist:get(c1, a),
     ok = nkdist:unregister(c1, a),
-    {error, obj_not_found} = nkdist:get(c1, a),
+    {error, object_not_found} = nkdist:get(c1, a),
     ok.
 
 

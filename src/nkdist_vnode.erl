@@ -224,7 +224,7 @@ handle_command({unreg_all, Class, ObjId}, _Send, State) ->
 handle_command({get, Class, ObjId}, _Send, State) ->
 	Reply = case do_get(Class, ObjId, State) of
 		not_found ->
-			{error, obj_not_found};
+			{error, object_not_found};
 		{Type, RegList} ->
 			{ok, Type, [{Meta, Pid} || {Meta, Pid, _Mon} <- RegList]}
 	end,

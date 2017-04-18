@@ -161,7 +161,7 @@ unregister_all(Class, ObjId) ->
 %% @doc Gets registration information
 -spec get(obj_class(), obj_key()) ->
     {ok, reg_type(), [{obj_meta(), pid()}]} |
-    {error, obj_not_found|vnode_not_ready|term()}.
+    {error, object_not_found|vnode_not_ready|term()}.
 
 get(Class, ObjId) ->
     get(Class, ObjId, #{}).
