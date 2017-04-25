@@ -24,6 +24,7 @@
 
 -export([register/3, register/4, unregister/2, unregister/3, unregister_all/2]).
 -export([get_vnode/2, get_vnode/3, get/2, get/3, get_objs/1]).
+-export([gen_server_start/6]).
 -export([enable_leader/0, node_leader/0]).
 -export_type([reg_type/0, obj_class/0, obj_key/0, obj_meta/0, obj_idx/0]).
 -export_type([vnode_id/0]).
@@ -218,6 +219,19 @@ get_vnode(Class, ObjId, Opts) ->
             {ok, Node, Idx};
         [] -> 
             {error, vnode_not_ready}
+    end.
+
+
+%% @doc Starts a gen_server at the right node
+-spec gen_server_start(obj_class(), obj_key(), get_opts(), module(), list(), list()) ->
+    {ok, pid()} | {error, term()}.
+
+gen_server_start(Class, ObjId, Opts, Module, Args, GenOpts) ->
+    case nkdist:get_vnode(Class, ObjId, Opts) of
+        {ok, Node, _Idx} ->
+            rpc:call(Node, gen_server, start, [Module, Args, GenOpts]);
+        {error, Error} ->
+            {error, Error}
     end.
 
 
