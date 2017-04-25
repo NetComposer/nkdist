@@ -49,7 +49,7 @@
 
 -type get_opts() ::
     #{
-        obj_idx => obj_idx()
+        idx => obj_idx()
     }.
 
 -type reg_opts() ::
@@ -57,13 +57,13 @@
         meta => term(),         % Associate this metadata to the registration
         pid => pid(),           % Registers this pid instead of self()
         replace_pid => pid(),   % Replaces this pid without generating conflict
-        obj_idx => obj_idx()    % Uses this idx to select the vnode instead of auto
+        idx => obj_idx()    % Uses this idx to select the vnode instead of auto
     }.
 
 -type unreg_opts() ::
     #{
         pid => pid(),           % Registers this pid instead of self()
-        obj_idx => obj_idx()    % Uses this idx to select the vnode
+        idx => obj_idx()    % Uses this idx to select the vnode
     }.
 
 -type vnode_id() :: chash:index_as_int().
@@ -80,23 +80,19 @@
                                     % registration
     {leader, pid()|none}        |   % A new leader has been elected for a 'leader'
                                     % registration, or none is available. In this case
-                                    % the process should re-register itself to forcer
+                                    % the process should re-register itself to force
                                     % a new election try.
     {must_move, node()}         |   % A registered 'proc' process must move itself
-                                    % and start ad register at this node, because 
-                                    % its vnode halready moved.
+                                    % and start and register at this node, because
+                                    % its vnode has been moved.
     {pid_conflict, pid()}       |   % During a handoff, a reg or proc registration
-                                    % failed because there was another proces
+                                    % failed because there was another process
                                     % already registered. Must send any update to 
                                     % the pid() and stop.
     {type_conflict, reg_type()}.    % During a handoff, a registration
                                     % failed because there was another process
                                     % already registered with another type.
                                     % Must stop
-
-
-
-
 
 
 %% ===================================================================
@@ -205,8 +201,8 @@ get_vnode(Class, ObjId) ->
 
 get_vnode(Class, ObjId, Opts) ->
     DocIdx = case Opts of
-        #{doc_idx:=UserIdx} -> 
-            UserIdx;
+        #{idx:=UserIdx} ->
+            chash:key_of(UserIdx);
         _ -> 
             chash:key_of({Class, ObjId})
     end,
