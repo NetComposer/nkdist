@@ -257,13 +257,18 @@ handle_call({put, Class, ObjId, Meta, Pid}, _From, State) ->
     insert_reg(Class, ObjId, Meta, Pid, State),
     {reply, ok, State};
 
+
+%% The node receiving the link monitors both sides with 'orig'
+%% The node at DestPid monitor both with 'dest' and sends {received_link, Tag} to DestPid
+%% If we (the OrigPid) die, we do nothing
+
+
 handle_call({link, OrigPid, DestPid, Tag}, _From, State) ->
-    case
-        insert_item_pid({link_to, DestPid, Tag, orig}, OrigPid) == not_stored andalso
-        insert_item_pid({link_from, OrigPid, Tag, orig}, DestPid) == not_stored
-    of
+    To = insert_item_pid({link_to, DestPid, Tag, orig}, OrigPid),
+    Dest = insert_item_pid({link_from, OrigPid, Tag, orig}, DestPid),
+    case To==not_stored andalso Dest==not_stored of
         true ->
-            % It is a re-registration
+            % It is a re-registration with the same data
             ok;
         false ->
             gen_server:cast({?MODULE, node(DestPid)}, {link_dest, OrigPid, DestPid, Tag})
@@ -450,7 +455,6 @@ remove_item_pid(Item, Pid) ->
             not_removed
     end.
 
-
 %% @private
 remove_items_pid([], _Pid, _State) ->
 	ok;
@@ -461,17 +465,24 @@ remove_items_pid([Item|Rest], Pid, State) ->
             ets_delete_reg(Class, ObjId);
         {reserve, Class, ObjId} ->
             ets_delete_reserve(Class, ObjId);
-        {link_to, Pid2, Tag, Type} ->
-            % We do nothing
-            remove_item_pid({link_from, Pid, Tag, Type}, Pid2);
-        {link_from, Pid2, Tag, Type} ->
-            remove_item_pid({link_to, Pid, Tag, Type}, Pid2),
-            case Type of
-                orig ->
-                    send_msg(Pid2, {sent_link_down, Tag}, State);
-                dest ->
-                    send_msg(Pid2, {received_link_down, Tag}, State)
-            end
+        {link_to, DestPid, Tag, orig} ->
+            % We are at Orig's node and OrigPid has fallen.
+            % It makes no sense sending anything since the remote node, if alive, will detect it
+            remove_item_pid({link_from, Pid, Tag, orig}, DestPid);
+        {link_from, OrigPid, Tag, orig} ->
+            %% We are at Orig's node and DestPid has fallen.
+            %% We notify OrigPid with sent_link_down
+            send_msg(OrigPid, {sent_link_down, Tag}, State),
+            remove_item_pid({link_to, Pid, Tag, orig}, OrigPid);
+        {link_to, OrigPid, Tag, dest} ->
+            % We are at Dest's node and DestPid has fallen
+            % It makes no sense sending anything
+            remove_item_pid({link_from, Pid, Tag, dest}, OrigPid);
+        {link_from, DestPid, Tag, dest} ->
+            % We are at Dest's node and OrigPid has fallen.
+            % We notify DestPid wi
+            send_msg(DestPid, {received_link_down, Tag}, State),
+            remove_item_pid({link_to, Pid, Tag, dest}, DestPid)
     end,
 	remove_items_pid(Rest, Pid, State).
 
