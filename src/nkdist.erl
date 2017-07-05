@@ -26,6 +26,7 @@
 -export([get_vnode/2, get_vnode/3, get/2, get/3, get_objs/1]).
 -export([gen_server_start/6]).
 -export([enable_leader/0, node_leader/0]).
+-export([wait_for_service/0]).
 -export_type([reg_type/0, obj_class/0, obj_key/0, obj_meta/0, obj_idx/0]).
 -export_type([vnode_id/0]).
 -export_type([nkdist_info/0]).
@@ -268,4 +269,15 @@ node_leader() ->
     end.
 
 
-
+%% @doc Wait for all vnodes and workers to be properly
+%% initialized and ready. This function either blocks, or returns the 
+%% atom 'ok' as soon as the vnodes and the associated workers are
+%% ready to accept commands.
+%%
+%% Note: this function is meant to be used only by external applications that rely
+%% on nkdist. For instance, if called from within nkdist´s start/2 
+%% function, this function will not behave as expected (it actually blocks
+%% forever).
+-spec wait_for_service() -> ok.
+wait_for_service() ->
+    riak_core:wait_for_service(nkdist).

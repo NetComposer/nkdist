@@ -53,7 +53,7 @@ start(Type) ->
     nkdist_util:ensure_dir(),
     case nklib_util:ensure_all_started(?APP, Type) of
         {ok, _Started} ->
-            riak_core:wait_for_service(nkdist),
+            nkdist:wait_for_service(), 
             ok;
         Error ->
             Error
