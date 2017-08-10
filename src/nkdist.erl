@@ -63,7 +63,7 @@
 
 -type unreg_opts() ::
     #{
-        pid => pid(),           % Registers this pid instead of self()
+        pid => pid(),       % Registers this pid instead of self()
         idx => obj_idx()    % Uses this idx to select the vnode
     }.
 

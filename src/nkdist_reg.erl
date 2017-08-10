@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find/2, find/3, register/3, register/4]).
+-export([find/2, find/3, register/3, register/4, unregister/2, unregister/3]).
 -export([link/3, link_pid/2, link_pid/3, unlink/3, unlink_pid/2, unlink_pid/3]).
 -export([reserve/2, unreserve/2]).
 -export([update_pid/2]).
@@ -50,6 +50,11 @@
 
 -type reg_opts() ::
     nkdist:reg_opts() | #{sync => boolean()}.
+
+-type unreg_opts() ::
+    nkdist:unreg_opts().
+
+
 
 -type msg() ::
     {received_link, tag()} |        % A new link has been received
@@ -125,6 +130,25 @@ register(Type, Class, ObjId, Opts) ->
 		{error, Error} ->
 			{error, Error}
 	end.
+
+
+%% @doc Removes a registration and updates cache
+-spec unregister(nkdist:obj_class(), nkdist:obj_id()) ->
+    ok | {error, {pid_conflict, pid()}|term()}.
+
+unregister(Class, ObjId) ->
+    nkdist:unregister(Class, ObjId, #{}).
+
+
+%% @doc Removes a registration and updates cache
+-spec unregister(nkdist:obj_class(), nkdist:obj_id(), unreg_opts()) ->
+    ok | {error, {pid_conflict, pid()}|term()}.
+
+unregister(Class, ObjId, Opts) ->
+    nkdist:unregister(Class, ObjId, Opts),
+    Pid = maps:get(pid, Opts, self()),
+    Msg = {rm, Class, ObjId, Pid},
+    gen_server:cast(?MODULE, Msg).
 
 
 %% @doc Links current process to another object
@@ -292,6 +316,10 @@ handle_cast({put, Class, ObjId, Meta, Pid}, State) ->
 	insert_reg(Class, ObjId, Meta, Pid, State),
 	{noreply, State};
 
+handle_cast({rm, Class, ObjId, Pid}, State) ->
+    remove_reg(Class, ObjId, Pid),
+    {noreply, State};
+
 handle_cast({link_dest, OrigPid, DestPid, Tag}, State) ->
     insert_item_pid({link_to, OrigPid, Tag, dest}, DestPid),
     insert_item_pid({link_from, DestPid, Tag, dest}, OrigPid),
@@ -394,6 +422,12 @@ insert_reg(Class, ObjId, Meta, Pid, State) ->
 			ets_store_reg(Class, ObjId, Meta, Pid)
 	end,
 	insert_item_pid({reg, Class, ObjId}, Pid).
+
+
+%% @private
+remove_reg(Class, ObjId, Pid) ->
+    ets_delete_reg(Class, ObjId),
+    remove_item_pid({reg, Class, ObjId}, Pid).
 
 
 %% @private
